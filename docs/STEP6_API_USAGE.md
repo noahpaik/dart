@@ -171,6 +171,20 @@ Behavior:
 - Exits with status `2` and an argparse-style error message when input JSON is invalid.
 - Exits with status `2` when integration route is `TRACK_C` (`fallback_required=false`).
 
+## CLI: Track C helper outputs
+
+Use the CLI to parse local XBRL note files and emit deterministic helper payloads.
+
+```bash
+PYTHONPATH=src python3 -m dart_pipeline.cli \
+  track-c-helpers \
+  --xbrl-dir tests/fixtures/track_c/basic_bundle
+```
+
+Behavior:
+- Prints JSON with `sga_accounts` and `segment_members`.
+- Exits with status `2` and an argparse-style error message for invalid `--xbrl-dir` inputs.
+
 ## Behavior policy (Step6)
 
 - Scope is annual reports only: `reprt_code=11011`.

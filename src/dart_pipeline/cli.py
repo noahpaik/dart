@@ -10,6 +10,11 @@ from pydantic import ValidationError
 from dart_pipeline.contracts import Step6TrackCIntegrationResult
 from dart_pipeline.pipeline_step6 import build_track_b_handoff_request
 from dart_pipeline.routing import route_by_coverage
+from dart_pipeline.track_c import (
+    extract_segment_members,
+    extract_sga_accounts,
+    parse_xbrl_notes,
+)
 from dart_pipeline.timeseries import build_dual_views
 from dart_pipeline.validation import run_tieout
 
@@ -51,6 +56,17 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help="Path to a Step6TrackCIntegrationResult JSON file",
+    )
+
+    track_c_helpers = subparsers.add_parser(
+        "track-c-helpers",
+        help="Extract deterministic Track C helper outputs from an XBRL directory",
+    )
+    track_c_helpers.add_argument(
+        "--xbrl-dir",
+        type=str,
+        required=True,
+        help="Path to XBRL directory",
     )
 
     return parser
@@ -194,6 +210,16 @@ def _build_handoff_request_payload(integration_json_path: str) -> dict[str, Any]
     ).model_dump(mode="json")
 
 
+def _build_track_c_helpers_payload(xbrl_dir: str) -> dict[str, Any]:
+    notes = parse_xbrl_notes(xbrl_dir=xbrl_dir)
+    return {
+        "sga_accounts": extract_sga_accounts(notes),
+        "segment_members": [
+            member.model_dump(mode="json") for member in extract_segment_members(notes)
+        ],
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -201,6 +227,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "handoff-request":
         try:
             payload = _build_handoff_request_payload(args.integration_json)
+        except ValueError as exc:
+            parser.exit(status=2, message=f"error: {exc}\n")
+    elif args.command == "track-c-helpers":
+        try:
+            payload = _build_track_c_helpers_payload(args.xbrl_dir)
         except ValueError as exc:
             parser.exit(status=2, message=f"error: {exc}\n")
     else:

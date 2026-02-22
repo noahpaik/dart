@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+TRACK_C_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "track_c" / "basic_bundle"
 
 
 def _cli_env() -> dict[str, str]:
@@ -110,6 +111,7 @@ def test_cli_help_returns_success() -> None:
     assert "restatement" in result.stdout
     assert "coverage" in result.stdout
     assert "handoff-request" in result.stdout
+    assert "track-c-helpers" in result.stdout
 
 
 @pytest.mark.parametrize("command", ["tieout", "restatement", "coverage"])
@@ -226,3 +228,46 @@ def test_cli_handoff_request_rejects_track_c_integration(tmp_path: Path) -> None
 
     assert result.returncode == 2
     assert "Track B handoff request requires TRACK_B_FALLBACK route" in result.stderr
+
+
+def test_cli_track_c_helpers_success() -> None:
+    result = _run_cli(
+        "track-c-helpers",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "sga_accounts": {
+            "dart_DepreciationExpenseSellingGeneralAdministrativeExpenses": "감가상각비",
+            "dart_SalariesWagesSellingGeneralAdministrativeExpenses": "급여",
+        },
+        "segment_members": [
+            {
+                "account_id": "entity00134477_HeadquartersMember",
+                "label_ko": "본사",
+                "source": "company",
+            },
+            {
+                "account_id": "entity00134477_SalesDomesticMember",
+                "label_ko": "국내",
+                "source": "company",
+            },
+        ],
+    }
+
+
+def test_cli_track_c_helpers_rejects_invalid_xbrl_dir(tmp_path: Path) -> None:
+    result = _run_cli(
+        "track-c-helpers",
+        "--xbrl-dir",
+        str(tmp_path / "missing_xbrl_dir"),
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 2
+    assert "error:" in result.stderr
+    assert "xbrl_dir" in result.stderr
