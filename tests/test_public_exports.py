@@ -16,6 +16,7 @@ from dart_pipeline.pipeline_step6 import (
     build_track_b_handoff_request,
     execute_step6_with_track_b_handoff,
 )
+from dart_pipeline.track_c import extract_segment_members, extract_sga_accounts
 
 
 def test_package_reexports_step6_contracts_and_functions() -> None:
@@ -31,6 +32,8 @@ def test_package_reexports_step6_contracts_and_functions() -> None:
     assert dp.build_step6_track_c_integration is build_step6_track_c_integration
     assert dp.build_track_b_handoff_request is build_track_b_handoff_request
     assert dp.execute_step6_with_track_b_handoff is execute_step6_with_track_b_handoff
+    assert dp.extract_sga_accounts is extract_sga_accounts
+    assert dp.extract_segment_members is extract_segment_members
 
 
 def test_package_all_includes_step6_exports() -> None:
@@ -46,5 +49,7 @@ def test_package_all_includes_step6_exports() -> None:
         "build_step6_track_c_integration",
         "build_track_b_handoff_request",
         "execute_step6_with_track_b_handoff",
+        "extract_sga_accounts",
+        "extract_segment_members",
     }
     assert expected.issubset(set(dp.__all__))

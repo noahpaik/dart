@@ -11,6 +11,8 @@ from dart_pipeline.track_c.xbrl_parser import (
     classify_source,
     discover_xbrl_linkbase_files,
     extract_role_code,
+    extract_segment_members,
+    extract_sga_accounts,
     parse_xbrl_notes,
 )
 
@@ -94,6 +96,35 @@ def test_parse_xbrl_notes_is_deterministic() -> None:
     assert parsed_first == parsed_second
 
 
+def test_extract_sga_accounts_and_parser_method() -> None:
+    notes = parse_xbrl_notes(FIXTURE_DIR)
+
+    expected = {
+        "dart_DepreciationExpenseSellingGeneralAdministrativeExpenses": "감가상각비",
+        "dart_SalariesWagesSellingGeneralAdministrativeExpenses": "급여",
+    }
+
+    assert extract_sga_accounts(notes) == expected
+
+    parser = XbrlParser(FIXTURE_DIR)
+    assert parser.get_sga_accounts() == expected
+
+
+def test_extract_segment_members_and_parser_method() -> None:
+    notes = parse_xbrl_notes(FIXTURE_DIR)
+
+    extracted = extract_segment_members(notes)
+    assert [member.account_id for member in extracted] == [
+        "entity00134477_HeadquartersMember",
+        "entity00134477_SalesDomesticMember",
+    ]
+    assert [member.label_ko for member in extracted] == ["본사", "국내"]
+    assert all(member.source == XbrlSource.COMPANY for member in extracted)
+
+    parser = XbrlParser(FIXTURE_DIR)
+    assert parser.get_segment_members() == extracted
+
+
 def test_parse_xbrl_notes_empty_dir_returns_empty_list(tmp_path: Path) -> None:
     assert parse_xbrl_notes(tmp_path) == []
 
@@ -104,3 +135,9 @@ def test_parse_xbrl_notes_invalid_input_errors() -> None:
 
     with pytest.raises(ValueError):
         XbrlParser(FIXTURE_DIR, note_roles={" ": "role"})  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError):
+        extract_sga_accounts([object()])  # type: ignore[list-item]
+
+    with pytest.raises(ValueError):
+        extract_segment_members([object()])  # type: ignore[list-item]

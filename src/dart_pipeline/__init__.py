@@ -36,7 +36,13 @@ from .pipeline_step6 import (
     execute_step6_with_track_b_handoff,
 )
 from .routing import route_by_coverage, route_from_track_c_roles
-from .track_c import NOTE_ROLES, XbrlParser, parse_xbrl_notes
+from .track_c import (
+    NOTE_ROLES,
+    XbrlParser,
+    extract_segment_members,
+    extract_sga_accounts,
+    parse_xbrl_notes,
+)
 from .timeseries import build_dual_views
 from .validation import run_tieout
 
@@ -75,6 +81,8 @@ __all__ = [
     "build_track_b_handoff_request",
     "canonical_identity_key",
     "execute_step6_with_track_b_handoff",
+    "extract_segment_members",
+    "extract_sga_accounts",
     "parse_xbrl_notes",
     "route_by_coverage",
     "route_from_track_c_roles",

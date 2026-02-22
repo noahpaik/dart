@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +32,15 @@ _NS = {"link": _LINK_NS, "xlink": _XLINK_NS}
 _SKIP_TOKENS = ("Abstract", "Table", "LineItems", "Axis")
 _ROLE_PATTERN = re.compile(r"role-([A-Za-z0-9]+)")
 _ROLE_FALLBACK_PATTERN = re.compile(r"([DU]\d{6})", re.IGNORECASE)
+_SGA_ACCOUNT_ID_KEYWORDS = (
+    "SellingGeneralAdministrativeExpenses",
+    "SalariesWages",
+    "ProvisionForSeveranceIndemnities",
+    "EmployeeBenefits",
+    "MiscellaneousExpenses",
+    "TotalSellingGeneralAdministrativeExpenses",
+)
+_SEGMENT_ROLE_NAMES = frozenset({"영업부문"})
 
 
 @dataclass
@@ -241,6 +250,59 @@ class XbrlParser:
         notes.sort(key=lambda note: (note.role_code, note.role_name))
         return notes
 
+    def get_sga_accounts(self) -> dict[str, str]:
+        return extract_sga_accounts(self.parse())
+
+    def get_segment_members(self) -> list[XbrlMemberRef]:
+        return extract_segment_members(self.parse())
+
+
+def _ensure_notes_sequence(notes: Sequence[XbrlNote]) -> None:
+    for index, note in enumerate(notes):
+        if not isinstance(note, XbrlNote):
+            raise ValueError(f"notes[{index}] must be XbrlNote")
+
+
+def extract_sga_accounts(notes: Sequence[XbrlNote]) -> dict[str, str]:
+    if not isinstance(notes, Sequence):
+        raise ValueError("notes must be a sequence of XbrlNote")
+    _ensure_notes_sequence(notes)
+
+    sga_accounts: dict[str, str] = {}
+    for note in notes:
+        for account in note.accounts:
+            if account.source != XbrlSource.DART:
+                continue
+            if not (
+                any(keyword in account.account_id for keyword in _SGA_ACCOUNT_ID_KEYWORDS)
+                or "판관비" in account.label_ko
+            ):
+                continue
+            sga_accounts.setdefault(account.account_id, account.label_ko)
+
+    return {account_id: sga_accounts[account_id] for account_id in sorted(sga_accounts)}
+
+
+def extract_segment_members(notes: Sequence[XbrlNote]) -> list[XbrlMemberRef]:
+    if not isinstance(notes, Sequence):
+        raise ValueError("notes must be a sequence of XbrlNote")
+    _ensure_notes_sequence(notes)
+
+    segment_notes = [note for note in notes if note.role_name in _SEGMENT_ROLE_NAMES]
+    target_notes = segment_notes if segment_notes else list(notes)
+
+    members_by_id: dict[str, XbrlMemberRef] = {}
+    for note in target_notes:
+        for member in note.members:
+            if member.source != XbrlSource.COMPANY:
+                continue
+            members_by_id.setdefault(member.account_id, member)
+
+    return sorted(
+        members_by_id.values(),
+        key=lambda member: (member.account_id, member.source.value, member.label_ko),
+    )
+
 
 def parse_xbrl_notes(
     xbrl_dir: str | Path,
@@ -255,5 +317,7 @@ __all__ = [
     "classify_source",
     "discover_xbrl_linkbase_files",
     "extract_role_code",
+    "extract_segment_members",
+    "extract_sga_accounts",
     "parse_xbrl_notes",
 ]

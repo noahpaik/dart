@@ -71,6 +71,26 @@ print(result.routing_decision.model_dump(mode="json"))
 print(result.coverage_report.model_dump(mode="json") if result.coverage_report else None)
 ```
 
+## Track C helper extraction (LLM-free)
+
+```python
+from pathlib import Path
+
+from dart_pipeline.track_c import (
+    extract_segment_members,
+    extract_sga_accounts,
+    parse_xbrl_notes,
+)
+
+notes = parse_xbrl_notes(Path("tests/fixtures/track_c/basic_bundle"))
+
+# dart_ 기반 판관비 상세 계정 추출
+print(extract_sga_accounts(notes))
+
+# 회사 고유 member 추출 (영업부문 role이 있으면 우선 사용, 없으면 전체 notes fallback)
+print([member.model_dump(mode="json") for member in extract_segment_members(notes)])
+```
+
 ## Step6 explicit Track B handoff
 
 ```python
