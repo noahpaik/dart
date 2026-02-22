@@ -1,0 +1,14 @@
+# Secrets
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# Python cache/test artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local outputs
+out/
