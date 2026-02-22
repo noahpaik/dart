@@ -185,6 +185,26 @@ Behavior:
 - Prints JSON with `sga_accounts` and `segment_members`.
 - Exits with status `2` and an argparse-style error message for invalid `--xbrl-dir` inputs.
 
+## CLI: Track C deterministic routing from XBRL roles
+
+Use the CLI to parse local XBRL notes and route deterministically from real role coverage.
+
+```bash
+PYTHONPATH=src python3 -m dart_pipeline.cli \
+  track-c-route \
+  --xbrl-dir tests/fixtures/track_c/basic_bundle \
+  --required-role D822105 \
+  --required-role D831150 \
+  --required-role D838000 \
+  --critical-role D851100 \
+  --threshold 0.67
+```
+
+Behavior:
+- Prints JSON with `decision`, `report`, and `fallback_required`.
+- `fallback_required=true` when `decision.route` is `TRACK_B_FALLBACK`.
+- Exits with status `2` and an argparse-style error for invalid `--xbrl-dir`, invalid `--threshold` (`[0,1]`), or invalid routing input.
+
 ## Behavior policy (Step6)
 
 - Scope is annual reports only: `reprt_code=11011`.

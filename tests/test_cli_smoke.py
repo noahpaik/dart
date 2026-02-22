@@ -112,6 +112,7 @@ def test_cli_help_returns_success() -> None:
     assert "coverage" in result.stdout
     assert "handoff-request" in result.stdout
     assert "track-c-helpers" in result.stdout
+    assert "track-c-route" in result.stdout
 
 
 @pytest.mark.parametrize("command", ["tieout", "restatement", "coverage"])
@@ -271,3 +272,72 @@ def test_cli_track_c_helpers_rejects_invalid_xbrl_dir(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert "error:" in result.stderr
     assert "xbrl_dir" in result.stderr
+
+
+def test_cli_track_c_route_success_track_c() -> None:
+    result = _run_cli(
+        "track-c-route",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        "--required-role",
+        "D822105",
+        "--required-role",
+        "D831150",
+        "--required-role",
+        "D838000",
+        "--threshold",
+        "1.0",
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["decision"]["route"] == "TRACK_C"
+    assert payload["decision"]["reason_code"] == "COVERAGE_PASS"
+    assert payload["report"]["required_roles"] == ["d822105", "d831150", "d838000"]
+    assert payload["report"]["coverage_score"] == 1.0
+    assert payload["fallback_required"] is False
+
+
+def test_cli_track_c_route_critical_missing_fallback() -> None:
+    result = _run_cli(
+        "track-c-route",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        "--required-role",
+        "D822105",
+        "--required-role",
+        "D831150",
+        "--required-role",
+        "D838000",
+        "--required-role",
+        "D851100",
+        "--critical-role",
+        "D851100",
+        "--threshold",
+        "1.0",
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["decision"]["route"] == "TRACK_B_FALLBACK"
+    assert payload["decision"]["reason_code"] == "CRITICAL_ROLE_MISSING"
+    assert payload["report"]["critical_missing_roles"] == ["d851100"]
+    assert payload["fallback_required"] is True
+
+
+def test_cli_track_c_route_rejects_invalid_threshold() -> None:
+    result = _run_cli(
+        "track-c-route",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        "--required-role",
+        "D822105",
+        "--threshold",
+        "1.1",
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 2
+    assert "threshold" in result.stderr.lower()

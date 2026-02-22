@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any, Sequence
 
 from pydantic import ValidationError
 
-from dart_pipeline.contracts import Step6TrackCIntegrationResult
+from dart_pipeline.contracts import Route, RoutingReasonCode, Step6TrackCIntegrationResult
 from dart_pipeline.pipeline_step6 import build_track_b_handoff_request
-from dart_pipeline.routing import route_by_coverage
+from dart_pipeline.routing import route_by_coverage, route_from_track_c_roles
 from dart_pipeline.track_c import (
     extract_segment_members,
     extract_sga_accounts,
@@ -69,7 +70,44 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to XBRL directory",
     )
 
+    track_c_route = subparsers.add_parser(
+        "track-c-route",
+        help="Route deterministically from real XBRL roles",
+    )
+    track_c_route.add_argument(
+        "--xbrl-dir",
+        type=str,
+        required=True,
+        help="Path to XBRL directory",
+    )
+    track_c_route.add_argument(
+        "--required-role",
+        action="append",
+        required=True,
+        help="Required role code (repeatable, at least one)",
+    )
+    track_c_route.add_argument(
+        "--critical-role",
+        action="append",
+        default=[],
+        help="Critical role code (repeatable)",
+    )
+    track_c_route.add_argument(
+        "--threshold",
+        type=float,
+        default=0.67,
+        help="Coverage threshold in [0, 1] (default: 0.67)",
+    )
+
     return parser
+
+
+def _validate_threshold(threshold: float) -> float:
+    if not isinstance(threshold, float) or not math.isfinite(threshold):
+        raise ValueError("--threshold must be a finite float in [0, 1]")
+    if threshold < 0.0 or threshold > 1.0:
+        raise ValueError("--threshold must be within [0, 1]")
+    return threshold
 
 
 def _demo_tieout() -> dict[str, Any]:
@@ -220,6 +258,33 @@ def _build_track_c_helpers_payload(xbrl_dir: str) -> dict[str, Any]:
     }
 
 
+def _build_track_c_route_payload(
+    *,
+    xbrl_dir: str,
+    required_roles: list[str],
+    critical_roles: list[str],
+    threshold: float,
+) -> dict[str, Any]:
+    threshold = _validate_threshold(threshold)
+    notes = parse_xbrl_notes(xbrl_dir=xbrl_dir)
+    decision, report = route_from_track_c_roles(
+        parsed_notes=notes,
+        required_roles=required_roles,
+        critical_roles=critical_roles,
+        threshold=threshold,
+    )
+    if decision.reason_code == RoutingReasonCode.INVALID_INPUT:
+        raise ValueError(
+            "invalid routing input for track-c-route "
+            "(check --required-role, --critical-role, and --threshold)"
+        )
+    return {
+        "decision": decision.model_dump(mode="json"),
+        "report": report.model_dump(mode="json") if report is not None else None,
+        "fallback_required": decision.route == Route.TRACK_B_FALLBACK,
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -232,6 +297,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "track-c-helpers":
         try:
             payload = _build_track_c_helpers_payload(args.xbrl_dir)
+        except ValueError as exc:
+            parser.exit(status=2, message=f"error: {exc}\n")
+    elif args.command == "track-c-route":
+        try:
+            payload = _build_track_c_route_payload(
+                xbrl_dir=args.xbrl_dir,
+                required_roles=args.required_role,
+                critical_roles=args.critical_role,
+                threshold=args.threshold,
+            )
         except ValueError as exc:
             parser.exit(status=2, message=f"error: {exc}\n")
     else:
