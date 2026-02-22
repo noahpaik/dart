@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<link:linkbase xmlns:link="http://www.xbrl.org/2003/linkbase" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <link:labelLink xlink:type="extended">
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_RevenueFromContractsWithCustomers" xlink:label="loc_rev" />
+    <link:label xlink:type="resource" xlink:label="lab_rev" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="en">Revenue from contracts with customers</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_rev" xlink:to="lab_rev" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#dart_SalariesWagesSellingGeneralAdministrativeExpenses" xlink:label="loc_salary" />
+    <link:label xlink:type="resource" xlink:label="lab_salary" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="en">Salaries and wages</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_salary" xlink:to="lab_salary" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_PropertyPlantAndEquipment" xlink:label="loc_ppe" />
+    <link:label xlink:type="resource" xlink:label="lab_ppe" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="en">Property, plant and equipment</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_ppe" xlink:to="lab_ppe" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#dart_DepreciationExpenseSellingGeneralAdministrativeExpenses" xlink:label="loc_dep" />
+    <link:label xlink:type="resource" xlink:label="lab_dep" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="en">Depreciation expense</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_dep" xlink:to="lab_dep" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_EarningsPerShareBasic" xlink:label="loc_eps" />
+    <link:label xlink:type="resource" xlink:label="lab_eps" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="en">Basic earnings per share</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_eps" xlink:to="lab_eps" />
+  </link:labelLink>
+</link:linkbase>

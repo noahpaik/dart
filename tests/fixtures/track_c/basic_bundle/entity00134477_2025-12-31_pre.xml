@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<link:linkbase xmlns:link="http://www.xbrl.org/2003/linkbase" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <link:presentationLink xlink:type="extended" xlink:role="http://dart.fss.or.kr/role/ifrs_15_role-D831150">
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_OperatingSegmentsMember" xlink:label="d831_loc_01" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#entity00134477_SalesDomesticMember" xlink:label="d831_loc_02" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#dart_SalariesWagesSellingGeneralAdministrativeExpenses" xlink:label="d831_loc_03" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_RevenueFromContractsWithCustomers" xlink:label="d831_loc_04" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_RevenueFromContractsWithCustomers" xlink:label="d831_loc_05" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_SegmentAxis" xlink:label="d831_loc_06" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_SegmentInformationTable" xlink:label="d831_loc_07" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_SegmentInformationLineItems" xlink:label="d831_loc_08" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_ContractAssetsAbstract" xlink:label="d831_loc_09" />
+  </link:presentationLink>
+
+  <link:presentationLink xlink:type="extended" xlink:role="http://dart.fss.or.kr/role/ias_16_role-D822105">
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_PropertyPlantAndEquipment" xlink:label="d822_loc_01" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#dart_DepreciationExpenseSellingGeneralAdministrativeExpenses" xlink:label="d822_loc_02" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#entity00134477_HeadquartersMember" xlink:label="d822_loc_03" />
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_NoncurrentAssetsAbstract" xlink:label="d822_loc_04" />
+  </link:presentationLink>
+
+  <link:presentationLink xlink:type="extended" xlink:role="http://dart.fss.or.kr/role/unknown_role-D999999">
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_Assets" xlink:label="d999_loc_01" />
+  </link:presentationLink>
+
+  <link:presentationLink xlink:type="extended" xlink:role="http://dart.fss.or.kr/role/D838000">
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_EarningsPerShareBasic" xlink:label="d838_loc_01" />
+  </link:presentationLink>
+</link:linkbase>

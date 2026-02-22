@@ -5,6 +5,10 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
+from pydantic import ValidationError
+
+from dart_pipeline.contracts import Step6TrackCIntegrationResult
+from dart_pipeline.pipeline_step6 import build_track_b_handoff_request
 from dart_pipeline.routing import route_by_coverage
 from dart_pipeline.timeseries import build_dual_views
 from dart_pipeline.validation import run_tieout
@@ -36,6 +40,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output",
         type=str,
         help="Optional JSON output path under ./out",
+    )
+
+    handoff_request = subparsers.add_parser(
+        "handoff-request",
+        help="Build Track-B handoff request from Step6 integration JSON",
+    )
+    handoff_request.add_argument(
+        "--integration-json",
+        type=str,
+        required=True,
+        help="Path to a Step6TrackCIntegrationResult JSON file",
     )
 
     return parser
@@ -149,11 +164,48 @@ def _run_command(command: str) -> dict[str, Any]:
     raise ValueError(f"unsupported command: {command}")
 
 
+def _build_handoff_request_payload(integration_json_path: str) -> dict[str, Any]:
+    integration_path = Path(integration_json_path)
+    try:
+        payload = integration_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(
+            f"unable to read --integration-json at {integration_path}: {exc}"
+        ) from exc
+
+    try:
+        integration_result = Step6TrackCIntegrationResult.model_validate_json(payload)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {"loc": (), "msg": str(exc)}
+        location = ".".join(str(part) for part in first_error.get("loc", ()))
+        message = first_error.get("msg", "invalid payload")
+        detail = (
+            f"{location}: {message}"
+            if location
+            else message
+        )
+        raise ValueError(
+            "--integration-json is not a valid Step6TrackCIntegrationResult "
+            f"({detail})"
+        ) from exc
+
+    return build_track_b_handoff_request(
+        integration_result=integration_result
+    ).model_dump(mode="json")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    payload = _run_command(args.command)
+    if args.command == "handoff-request":
+        try:
+            payload = _build_handoff_request_payload(args.integration_json)
+        except ValueError as exc:
+            parser.exit(status=2, message=f"error: {exc}\n")
+    else:
+        payload = _run_command(args.command)
+
     rendered = json.dumps(payload, sort_keys=True, indent=2) + "\n"
 
     output = getattr(args, "output", None)

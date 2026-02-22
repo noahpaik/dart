@@ -6,6 +6,11 @@ from .contracts import (
     Route,
     RoutingDecision,
     RoutingReasonCode,
+    Step6ExecutionResult,
+    Step6TrackCIntegrationResult,
+    TrackBHandoffExecutionResult,
+    TrackBHandoffExecutionStatus,
+    TrackBHandoffExecutorOutcome,
     TieOutItem,
     TieOutReasonCode,
     TieOutResult,
@@ -14,20 +19,39 @@ from .contracts import (
     TrackAAmount,
     TrackARow,
     TrackASnapshot,
+    TrackBHandoffRequest,
     TimeSeriesView,
     ViewType,
+    XbrlAccountRef,
+    XbrlMemberRef,
+    XbrlNote,
+    XbrlSource,
     canonical_identity_key,
 )
-from .routing import route_by_coverage
+from .pipeline_step6 import (
+    ANNUAL_REPRT_CODE,
+    build_step6_track_c_integration,
+    build_track_a_snapshot,
+    build_track_b_handoff_request,
+    execute_step6_with_track_b_handoff,
+)
+from .routing import route_by_coverage, route_from_track_c_roles
+from .track_c import NOTE_ROLES, XbrlParser, parse_xbrl_notes
 from .timeseries import build_dual_views
 from .validation import run_tieout
 
 __all__ = [
+    "ANNUAL_REPRT_CODE",
     "CanonicalIdentityKey",
     "CoverageReport",
     "Route",
     "RoutingDecision",
     "RoutingReasonCode",
+    "Step6ExecutionResult",
+    "Step6TrackCIntegrationResult",
+    "TrackBHandoffExecutionResult",
+    "TrackBHandoffExecutionStatus",
+    "TrackBHandoffExecutorOutcome",
     "TieOutItem",
     "TieOutReasonCode",
     "TieOutResult",
@@ -36,11 +60,24 @@ __all__ = [
     "TrackAAmount",
     "TrackARow",
     "TrackASnapshot",
+    "TrackBHandoffRequest",
     "TimeSeriesView",
     "ViewType",
+    "XbrlAccountRef",
+    "XbrlMemberRef",
+    "XbrlNote",
+    "XbrlParser",
+    "XbrlSource",
+    "NOTE_ROLES",
     "build_dual_views",
+    "build_step6_track_c_integration",
+    "build_track_a_snapshot",
+    "build_track_b_handoff_request",
     "canonical_identity_key",
+    "execute_step6_with_track_b_handoff",
+    "parse_xbrl_notes",
     "route_by_coverage",
+    "route_from_track_c_roles",
     "run_tieout",
 ]
 

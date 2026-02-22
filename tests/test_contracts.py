@@ -6,6 +6,12 @@ from dart_pipeline.contracts import (
     Route,
     RoutingDecision,
     RoutingReasonCode,
+    Step6ExecutionResult,
+    Step6TrackCIntegrationResult,
+    TrackBHandoffExecutionResult,
+    TrackBHandoffExecutionStatus,
+    TrackBHandoffExecutorOutcome,
+    TrackBHandoffRequest,
     TieOutItem,
     TieOutReasonCode,
     TieOutResult,
@@ -15,6 +21,7 @@ from dart_pipeline.contracts import (
     TrackASnapshot,
     TimeSeriesView,
     ViewType,
+    XbrlNote,
     canonical_identity_key,
 )
 
@@ -249,3 +256,233 @@ def test_track_a_snapshot_roundtrip_and_deterministic_row_sorting() -> None:
     raw = snapshot.model_dump_json()
     restored = TrackASnapshot.model_validate_json(raw)
     assert restored == snapshot
+
+
+def test_step6_execution_handoff_contract_consistency() -> None:
+    row = TrackARow(
+        corp_code="00126380",
+        rcept_no="20240301000001",
+        rcept_dt="20240301",
+        bsns_year="2024",
+        reprt_code="11011",
+        fs_div="CFS",
+        sj_div="BS",
+        account_id="ifrs-full_Assets",
+        account_nm="Assets",
+        ord=1,
+        source_row_idx=0,
+    )
+    snapshot = TrackASnapshot(
+        corp_code="00126380",
+        rcept_no="20240301000001",
+        rcept_dt="20240301",
+        bsns_year="2024",
+        reprt_code="11011",
+        fs_div="CFS",
+        rows=[row],
+    )
+    coverage_report = CoverageReport(
+        required_roles=["d831150", "d851100"],
+        found_roles=["d831150"],
+        missing_roles=["d851100"],
+        critical_missing_roles=["d851100"],
+        coverage_score=0.5,
+    )
+    fallback_integration = Step6TrackCIntegrationResult(
+        track_a_snapshot=snapshot,
+        track_c_notes=[],
+        routing_decision=RoutingDecision(
+            route=Route.TRACK_B_FALLBACK,
+            reason_code=RoutingReasonCode.CRITICAL_ROLE_MISSING,
+        ),
+        coverage_report=coverage_report,
+        fallback_required=True,
+    )
+    handoff_request = TrackBHandoffRequest(
+        corp_code="00126380",
+        bsns_year="2024",
+        reprt_code="11011",
+        rcept_no="20240301000001",
+        rcept_dt="20240301",
+        fs_div="CFS",
+        idempotency_key="idem-key-1",
+        reason_code=RoutingReasonCode.CRITICAL_ROLE_MISSING,
+        missing_roles=["d851100"],
+        critical_missing_roles=["d851100"],
+        coverage_score=0.5,
+    )
+    execution_result = TrackBHandoffExecutionResult(
+        idempotency_key="idem-key-1",
+        attempts=1,
+        max_attempts=3,
+        outcome=TrackBHandoffExecutorOutcome(
+            status=TrackBHandoffExecutionStatus.RETRYABLE_ERROR,
+            error_code="TEMP_DOWNSTREAM",
+            error_message="temporary failure",
+            retry_after_seconds=2.0,
+        ),
+    )
+
+    execution = Step6ExecutionResult(
+        integration_result=fallback_integration,
+        track_b_handoff_request=handoff_request,
+        track_b_handoff_triggered=True,
+        track_b_handoff_execution_result=execution_result,
+    )
+    assert execution.track_b_handoff_triggered is True
+
+    with pytest.raises(ValidationError):
+        Step6ExecutionResult(
+            integration_result=fallback_integration,
+            track_b_handoff_request=None,
+            track_b_handoff_triggered=False,
+        )
+
+    with pytest.raises(ValidationError):
+        Step6ExecutionResult(
+            integration_result=fallback_integration,
+            track_b_handoff_request=handoff_request,
+            track_b_handoff_triggered=True,
+            track_b_handoff_execution_result=None,
+        )
+
+    with pytest.raises(ValidationError):
+        Step6ExecutionResult(
+            integration_result=fallback_integration,
+            track_b_handoff_request=handoff_request,
+            track_b_handoff_triggered=False,
+            track_b_handoff_execution_result=execution_result,
+        )
+
+    with pytest.raises(ValidationError):
+        Step6ExecutionResult(
+            integration_result=fallback_integration,
+            track_b_handoff_request=TrackBHandoffRequest(
+                corp_code="00126380",
+                bsns_year="2024",
+                reprt_code="11011",
+                rcept_no="20240301000001",
+                rcept_dt="20240301",
+                fs_div="CFS",
+                idempotency_key="idem-key-2",
+                reason_code=RoutingReasonCode.CRITICAL_ROLE_MISSING,
+                missing_roles=["d851100"],
+                critical_missing_roles=["d851100"],
+                coverage_score=0.5,
+            ),
+            track_b_handoff_triggered=True,
+            track_b_handoff_execution_result=execution_result,
+        )
+
+    track_c_integration = Step6TrackCIntegrationResult(
+        track_a_snapshot=snapshot,
+        track_c_notes=[XbrlNote(role_code="D831150", role_name="note", accounts=[], members=[])],
+        routing_decision=RoutingDecision(
+            route=Route.TRACK_C,
+            reason_code=RoutingReasonCode.COVERAGE_PASS,
+        ),
+        coverage_report=CoverageReport(
+            required_roles=["d831150"],
+            found_roles=["d831150"],
+            missing_roles=[],
+            critical_missing_roles=[],
+            coverage_score=1.0,
+        ),
+        fallback_required=False,
+    )
+    with pytest.raises(ValidationError):
+        Step6ExecutionResult(
+            integration_result=track_c_integration,
+            track_b_handoff_request=handoff_request,
+            track_b_handoff_triggered=False,
+        )
+
+    with pytest.raises(ValidationError):
+        TrackBHandoffRequest(
+            corp_code="00126380",
+            bsns_year="2024",
+            reprt_code="11011",
+            rcept_no="20240301000001",
+            rcept_dt="20240301",
+            fs_div="CFS",
+            idempotency_key="idem-key-1",
+            reason_code=RoutingReasonCode.COVERAGE_PASS,
+            missing_roles=[],
+            critical_missing_roles=[],
+            coverage_score=1.0,
+        )
+
+
+def test_track_b_handoff_executor_outcome_contracts() -> None:
+    success = TrackBHandoffExecutorOutcome(
+        status=TrackBHandoffExecutionStatus.SUCCESS
+    )
+    assert success.error_code is None
+
+    with pytest.raises(ValidationError):
+        TrackBHandoffExecutorOutcome(
+            status=TrackBHandoffExecutionStatus.SUCCESS,
+            error_code="ERR_SHOULD_NOT_EXIST",
+        )
+
+    retryable = TrackBHandoffExecutorOutcome(
+        status=TrackBHandoffExecutionStatus.RETRYABLE_ERROR,
+        error_code="TEMP_FAIL",
+        retry_after_seconds=1.5,
+    )
+    assert retryable.retry_after_seconds == 1.5
+
+    with pytest.raises(ValidationError):
+        TrackBHandoffExecutorOutcome(
+            status=TrackBHandoffExecutionStatus.RETRYABLE_ERROR,
+        )
+
+    permanent = TrackBHandoffExecutorOutcome(
+        status=TrackBHandoffExecutionStatus.PERMANENT_ERROR,
+        error_code="INVALID_PAYLOAD",
+        error_message="cannot deserialize",
+    )
+    assert permanent.error_code == "INVALID_PAYLOAD"
+
+    with pytest.raises(ValidationError):
+        TrackBHandoffExecutorOutcome(
+            status=TrackBHandoffExecutionStatus.PERMANENT_ERROR,
+            error_code="INVALID_PAYLOAD",
+            retry_after_seconds=2.0,
+        )
+
+
+def test_track_b_handoff_execution_result_contracts() -> None:
+    result = TrackBHandoffExecutionResult(
+        idempotency_key="idem-key-1",
+        attempts=2,
+        max_attempts=3,
+        outcome=TrackBHandoffExecutorOutcome(
+            status=TrackBHandoffExecutionStatus.RETRYABLE_ERROR,
+            error_code="TEMP_FAIL",
+            retry_after_seconds=0.5,
+        ),
+    )
+    assert result.attempts == 2
+
+    with pytest.raises(ValidationError):
+        TrackBHandoffExecutionResult(
+            idempotency_key="idem-key-1",
+            attempts=4,
+            max_attempts=3,
+            outcome=TrackBHandoffExecutorOutcome(
+                status=TrackBHandoffExecutionStatus.RETRYABLE_ERROR,
+                error_code="TEMP_FAIL",
+                retry_after_seconds=0.5,
+            ),
+        )
+
+    with pytest.raises(ValidationError):
+        TrackBHandoffExecutionResult(
+            idempotency_key="",
+            attempts=1,
+            max_attempts=1,
+            outcome=TrackBHandoffExecutorOutcome(
+                status=TrackBHandoffExecutionStatus.SUCCESS,
+            ),
+        )

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<link:linkbase xmlns:link="http://www.xbrl.org/2003/linkbase" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <link:labelLink xlink:type="extended">
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_RevenueFromContractsWithCustomers" xlink:label="loc_rev" />
+    <link:label xlink:type="resource" xlink:label="lab_rev" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="ko">고객과의 계약에서 생기는 수익</link:label>
+    <link:label xlink:type="resource" xlink:label="lab_rev_terse" xlink:role="http://www.xbrl.org/2003/role/terseLabel" xml:lang="ko">수익(요약)</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_rev" xlink:to="lab_rev" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#dart_SalariesWagesSellingGeneralAdministrativeExpenses" xlink:label="loc_salary" />
+    <link:label xlink:type="resource" xlink:label="lab_salary" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="ko">급여</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_salary" xlink:to="lab_salary" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_OperatingSegmentsMember" xlink:label="loc_seg_member" />
+    <link:label xlink:type="resource" xlink:label="lab_seg_member" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="ko">영업부문</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_seg_member" xlink:to="lab_seg_member" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#entity00134477_SalesDomesticMember" xlink:label="loc_domestic_member" />
+    <link:label xlink:type="resource" xlink:label="lab_domestic_member" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="ko">국내</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_domestic_member" xlink:to="lab_domestic_member" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_PropertyPlantAndEquipment" xlink:label="loc_ppe" />
+    <link:label xlink:type="resource" xlink:label="lab_ppe" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="ko">유형자산</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_ppe" xlink:to="lab_ppe" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#dart_DepreciationExpenseSellingGeneralAdministrativeExpenses" xlink:label="loc_dep" />
+    <link:label xlink:type="resource" xlink:label="lab_dep" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="ko">감가상각비</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_dep" xlink:to="lab_dep" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#entity00134477_HeadquartersMember" xlink:label="loc_hq_member" />
+    <link:label xlink:type="resource" xlink:label="lab_hq_member" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="ko">본사</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_hq_member" xlink:to="lab_hq_member" />
+
+    <link:loc xlink:type="locator" xlink:href="entity00134477_2025-12-31.xsd#ifrs-full_EarningsPerShareBasic" xlink:label="loc_eps" />
+    <link:label xlink:type="resource" xlink:label="lab_eps" xlink:role="http://www.xbrl.org/2003/role/label" xml:lang="ko">기본주당이익</link:label>
+    <link:labelArc xlink:type="arc" xlink:from="loc_eps" xlink:to="lab_eps" />
+  </link:labelLink>
+</link:linkbase>

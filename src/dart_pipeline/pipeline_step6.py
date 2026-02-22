@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any, Mapping
 
-from dart_pipeline.contracts import TrackARow, TrackASnapshot
+from dart_pipeline.contracts import (
+    Route,
+    Step6ExecutionResult,
+    Step6TrackCIntegrationResult,
+    TrackARow,
+    TrackASnapshot,
+    TrackBHandoffExecutionResult,
+    TrackBHandoffExecutionStatus,
+    TrackBHandoffExecutorOutcome,
+    TrackBHandoffRequest,
+)
 from dart_pipeline.dart_api import DartApiClient, DartApiError, DartApiErrorCode
+from dart_pipeline.routing import route_from_track_c_roles
+from dart_pipeline.track_c import parse_xbrl_notes
 
 ANNUAL_REPRT_CODE = "11011"
 
@@ -295,7 +311,229 @@ def build_track_a_snapshot(
     )
 
 
+def build_step6_track_c_integration(
+    *,
+    dart_api_client: DartApiClient,
+    corp_code: str,
+    bsns_year: str,
+    xbrl_dir: str | Path,
+    required_roles: list[str],
+    critical_roles: list[str],
+    threshold: float,
+    reprt_code: str = ANNUAL_REPRT_CODE,
+    allow_ofs_fallback: bool = False,
+    note_roles: Mapping[str, str] | None = None,
+    role_aliases: Mapping[str, str] | None = None,
+) -> Step6TrackCIntegrationResult:
+    """Build Step6 Track-A snapshot and Track-C routing decision deterministically."""
+    track_a_snapshot = build_track_a_snapshot(
+        dart_api_client=dart_api_client,
+        corp_code=corp_code,
+        bsns_year=bsns_year,
+        reprt_code=reprt_code,
+        allow_ofs_fallback=allow_ofs_fallback,
+    )
+    track_c_notes = parse_xbrl_notes(xbrl_dir=xbrl_dir, note_roles=note_roles)
+    routing_decision, coverage_report = route_from_track_c_roles(
+        parsed_notes=track_c_notes,
+        required_roles=required_roles,
+        critical_roles=critical_roles,
+        threshold=threshold,
+        role_aliases=role_aliases,
+    )
+
+    return Step6TrackCIntegrationResult(
+        track_a_snapshot=track_a_snapshot,
+        track_c_notes=track_c_notes,
+        routing_decision=routing_decision,
+        coverage_report=coverage_report,
+        fallback_required=routing_decision.route == Route.TRACK_B_FALLBACK,
+    )
+
+
+def build_track_b_handoff_request(
+    *,
+    integration_result: Step6TrackCIntegrationResult,
+) -> TrackBHandoffRequest:
+    if (
+        integration_result.routing_decision.route != Route.TRACK_B_FALLBACK
+        or not integration_result.fallback_required
+    ):
+        raise ValueError(
+            "Track B handoff request requires TRACK_B_FALLBACK route "
+            "and fallback_required=true"
+        )
+
+    snapshot = integration_result.track_a_snapshot
+    coverage_report = integration_result.coverage_report
+    reason_code = integration_result.routing_decision.reason_code
+    missing_roles = (
+        [] if coverage_report is None else sorted(set(coverage_report.missing_roles))
+    )
+    critical_missing_roles = (
+        []
+        if coverage_report is None
+        else sorted(set(coverage_report.critical_missing_roles))
+    )
+    coverage_score = 0.0 if coverage_report is None else coverage_report.coverage_score
+    idempotency_key = _build_track_b_handoff_idempotency_key(
+        corp_code=snapshot.corp_code,
+        bsns_year=snapshot.bsns_year,
+        reprt_code=snapshot.reprt_code,
+        rcept_no=snapshot.rcept_no,
+        rcept_dt=snapshot.rcept_dt,
+        fs_div=snapshot.fs_div,
+        reason_code=reason_code,
+        missing_roles=missing_roles,
+        critical_missing_roles=critical_missing_roles,
+        coverage_score=coverage_score,
+    )
+
+    return TrackBHandoffRequest(
+        corp_code=snapshot.corp_code,
+        bsns_year=snapshot.bsns_year,
+        reprt_code=snapshot.reprt_code,
+        rcept_no=snapshot.rcept_no,
+        rcept_dt=snapshot.rcept_dt,
+        fs_div=snapshot.fs_div,
+        idempotency_key=idempotency_key,
+        reason_code=reason_code,
+        missing_roles=missing_roles,
+        critical_missing_roles=critical_missing_roles,
+        coverage_score=coverage_score,
+    )
+
+
+def _build_track_b_handoff_idempotency_key(
+    *,
+    corp_code: str,
+    bsns_year: str,
+    reprt_code: str,
+    rcept_no: str,
+    rcept_dt: str,
+    fs_div: str,
+    reason_code: str,
+    missing_roles: list[str],
+    critical_missing_roles: list[str],
+    coverage_score: float,
+) -> str:
+    canonical_payload = {
+        "corp_code": corp_code,
+        "bsns_year": bsns_year,
+        "reprt_code": reprt_code,
+        "rcept_no": rcept_no,
+        "rcept_dt": rcept_dt,
+        "fs_div": fs_div,
+        "reason_code": reason_code,
+        "missing_roles": missing_roles,
+        "critical_missing_roles": critical_missing_roles,
+        "coverage_score": coverage_score,
+    }
+    canonical_json = json.dumps(
+        canonical_payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def execute_step6_with_track_b_handoff(
+    *,
+    dart_api_client: DartApiClient,
+    corp_code: str,
+    bsns_year: str,
+    xbrl_dir: str | Path,
+    required_roles: list[str],
+    critical_roles: list[str],
+    threshold: float,
+    reprt_code: str = ANNUAL_REPRT_CODE,
+    allow_ofs_fallback: bool = False,
+    note_roles: Mapping[str, str] | None = None,
+    role_aliases: Mapping[str, str] | None = None,
+    track_b_handoff_executor: (
+        Callable[[TrackBHandoffRequest], TrackBHandoffExecutorOutcome | None] | None
+    ) = None,
+    max_handoff_attempts: int = 1,
+) -> Step6ExecutionResult:
+    """Execute Step6 integration and explicitly prepare/trigger Track-B handoff."""
+    integration_result = build_step6_track_c_integration(
+        dart_api_client=dart_api_client,
+        corp_code=corp_code,
+        bsns_year=bsns_year,
+        xbrl_dir=xbrl_dir,
+        required_roles=required_roles,
+        critical_roles=critical_roles,
+        threshold=threshold,
+        reprt_code=reprt_code,
+        allow_ofs_fallback=allow_ofs_fallback,
+        note_roles=note_roles,
+        role_aliases=role_aliases,
+    )
+
+    if integration_result.routing_decision.route == Route.TRACK_C:
+        return Step6ExecutionResult(
+            integration_result=integration_result,
+            track_b_handoff_request=None,
+            track_b_handoff_triggered=False,
+            track_b_handoff_execution_result=None,
+        )
+
+    handoff_request = build_track_b_handoff_request(
+        integration_result=integration_result
+    )
+    if track_b_handoff_executor is None:
+        return Step6ExecutionResult(
+            integration_result=integration_result,
+            track_b_handoff_request=handoff_request,
+            track_b_handoff_triggered=False,
+            track_b_handoff_execution_result=None,
+        )
+
+    if max_handoff_attempts < 1:
+        raise ValueError("max_handoff_attempts must be >= 1")
+
+    attempts = 0
+    final_outcome: TrackBHandoffExecutorOutcome = TrackBHandoffExecutorOutcome(
+        status=TrackBHandoffExecutionStatus.SUCCESS
+    )
+    while attempts < max_handoff_attempts:
+        attempts += 1
+        executor_outcome = track_b_handoff_executor(handoff_request)
+        final_outcome = (
+            TrackBHandoffExecutorOutcome(
+                status=TrackBHandoffExecutionStatus.SUCCESS
+            )
+            if executor_outcome is None
+            else executor_outcome
+        )
+
+        if final_outcome.status == TrackBHandoffExecutionStatus.SUCCESS:
+            break
+        if final_outcome.status == TrackBHandoffExecutionStatus.PERMANENT_ERROR:
+            break
+        if attempts >= max_handoff_attempts:
+            break
+
+    execution_result = TrackBHandoffExecutionResult(
+        idempotency_key=handoff_request.idempotency_key,
+        attempts=attempts,
+        max_attempts=max_handoff_attempts,
+        outcome=final_outcome,
+    )
+
+    return Step6ExecutionResult(
+        integration_result=integration_result,
+        track_b_handoff_request=handoff_request,
+        track_b_handoff_triggered=True,
+        track_b_handoff_execution_result=execution_result,
+    )
+
+
 __all__ = [
     "ANNUAL_REPRT_CODE",
     "build_track_a_snapshot",
+    "build_step6_track_c_integration",
+    "build_track_b_handoff_request",
+    "execute_step6_with_track_b_handoff",
 ]
