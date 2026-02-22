@@ -203,7 +203,8 @@ PYTHONPATH=src python3 -m dart_pipeline.cli \
 Behavior:
 - Prints JSON with `decision`, `report`, and `fallback_required`.
 - `fallback_required=true` when `decision.route` is `TRACK_B_FALLBACK`.
-- Exits with status `2` and an argparse-style error for invalid `--xbrl-dir`, invalid `--threshold` (`[0,1]`), or invalid routing input.
+- Optional `--role-alias-json <path>` supports alias map JSON (`{"role_sga":"D831150"}`) for required/critical roles.
+- Exits with status `2` and an argparse-style error for invalid `--xbrl-dir`, invalid `--threshold` (`[0,1]`), invalid `--role-alias-json`, or invalid routing input.
 
 ## Behavior policy (Step6)
 

@@ -341,3 +341,60 @@ def test_cli_track_c_route_rejects_invalid_threshold() -> None:
 
     assert result.returncode == 2
     assert "threshold" in result.stderr.lower()
+
+
+def test_cli_track_c_route_supports_role_alias_json(tmp_path: Path) -> None:
+    alias_path = tmp_path / "role_aliases.json"
+    alias_path.write_text(
+        json.dumps(
+            {
+                "role_sga": "D831150",
+                "role_ppe": "D822105",
+                "role_eps": "D838000",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_cli(
+        "track-c-route",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        "--required-role",
+        "ROLE_SGA",
+        "--required-role",
+        "ROLE_PPE",
+        "--required-role",
+        "ROLE_EPS",
+        "--threshold",
+        "1.0",
+        "--role-alias-json",
+        str(alias_path),
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["decision"]["route"] == "TRACK_C"
+    assert payload["report"]["required_roles"] == ["d822105", "d831150", "d838000"]
+    assert payload["report"]["missing_roles"] == []
+
+
+def test_cli_track_c_route_rejects_invalid_role_alias_json(tmp_path: Path) -> None:
+    alias_path = tmp_path / "invalid_role_aliases.json"
+    alias_path.write_text(json.dumps(["not-an-object"]), encoding="utf-8")
+
+    result = _run_cli(
+        "track-c-route",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        "--required-role",
+        "D822105",
+        "--role-alias-json",
+        str(alias_path),
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 2
+    assert "role-alias-json" in result.stderr

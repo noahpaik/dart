@@ -98,6 +98,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.67,
         help="Coverage threshold in [0, 1] (default: 0.67)",
     )
+    track_c_route.add_argument(
+        "--role-alias-json",
+        type=str,
+        help="Optional JSON path for role alias map {alias: canonical_role}",
+    )
 
     return parser
 
@@ -108,6 +113,43 @@ def _validate_threshold(threshold: float) -> float:
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError("--threshold must be within [0, 1]")
     return threshold
+
+
+def _load_role_aliases(role_alias_json_path: str | None) -> dict[str, str] | None:
+    if role_alias_json_path is None:
+        return None
+
+    alias_path = Path(role_alias_json_path)
+    try:
+        raw_payload = alias_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(
+            f"unable to read --role-alias-json at {alias_path}: {exc}"
+        ) from exc
+
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"--role-alias-json is not valid JSON ({exc.msg})"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("--role-alias-json must be a JSON object mapping str to str")
+
+    aliases: dict[str, str] = {}
+    for raw_alias, raw_canonical in payload.items():
+        if not isinstance(raw_alias, str) or not isinstance(raw_canonical, str):
+            raise ValueError("--role-alias-json must map str keys to str values")
+
+        alias = raw_alias.strip()
+        canonical = raw_canonical.strip()
+        if not alias or not canonical:
+            raise ValueError("--role-alias-json keys and values must be non-empty strings")
+
+        aliases[alias] = canonical
+
+    return aliases
 
 
 def _demo_tieout() -> dict[str, Any]:
@@ -264,14 +306,17 @@ def _build_track_c_route_payload(
     required_roles: list[str],
     critical_roles: list[str],
     threshold: float,
+    role_alias_json_path: str | None,
 ) -> dict[str, Any]:
     threshold = _validate_threshold(threshold)
+    role_aliases = _load_role_aliases(role_alias_json_path)
     notes = parse_xbrl_notes(xbrl_dir=xbrl_dir)
     decision, report = route_from_track_c_roles(
         parsed_notes=notes,
         required_roles=required_roles,
         critical_roles=critical_roles,
         threshold=threshold,
+        role_aliases=role_aliases,
     )
     if decision.reason_code == RoutingReasonCode.INVALID_INPUT:
         raise ValueError(
@@ -306,6 +351,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 required_roles=args.required_role,
                 critical_roles=args.critical_role,
                 threshold=args.threshold,
+                role_alias_json_path=args.role_alias_json,
             )
         except ValueError as exc:
             parser.exit(status=2, message=f"error: {exc}\n")
