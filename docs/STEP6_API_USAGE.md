@@ -241,6 +241,18 @@ Behavior:
   - critical: `D851100`
 - Always includes one-shot Track B handoff payload logic in route output (`track_b_handoff_request` object or `null`).
 
+## Golden regression gate
+
+Run the Step6 one-click offline golden gate only:
+
+```bash
+PYTHONPATH=src python3 -m pytest -q tests/test_step6_e2e_golden.py
+```
+
+Notes:
+- This gate is fully offline and deterministic.
+- It uses fixture inputs only (`tests/fixtures/golden/...` and `tests/fixtures/track_c/basic_bundle`), with no network calls in test execution.
+
 ## CLI: Track-A snapshot → report-friendly Excel
 
 Use this command to convert a `TrackASnapshot` JSON into a report-friendly workbook
