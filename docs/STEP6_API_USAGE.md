@@ -207,6 +207,40 @@ Behavior:
 - Optional `--excel-output out/<name>.xlsx` writes an Excel workbook (`summary`, `roles`, `track_b_handoff_request`) under `./out`.
 - Exits with status `2` and an argparse-style error for invalid `--xbrl-dir`, invalid `--threshold` (`[0,1]`), invalid `--role-alias-json`, invalid `--excel-output`, or invalid routing input.
 
+## CLI: one-click Step6 E2E
+
+Run Track-A snapshot + Track-C routing in one command using corp name and year.
+
+```bash
+PYTHONPATH=src python3 -m dart_pipeline.cli \
+  step6-e2e \
+  --corp-name 삼성전자 \
+  --bsns-year 2024
+```
+
+Offline overrides (tests/no-network):
+
+```bash
+PYTHONPATH=src python3 -m dart_pipeline.cli \
+  step6-e2e \
+  --corp-name OfflineCorp \
+  --bsns-year 2024 \
+  --snapshot-json out/00126380_2024_track_a_snapshot.json \
+  --xbrl-dir tests/fixtures/track_c/basic_bundle
+```
+
+Behavior:
+- Writes deterministic artifacts under `./out`:
+  - `<corp_code>_<year>_track_a_snapshot.json`
+  - `<corp_code>_<year>_track_a_snapshot_report.xlsx`
+  - `<corp_code>_<year>_track_c_route.json`
+  - `<corp_code>_<year>_track_c_route.xlsx`
+  - `<corp_code>_<year>_xbrl/` (only when XBRL is downloaded)
+- Uses default roles when omitted:
+  - required: `D822105, D831150, D838000, D851100`
+  - critical: `D851100`
+- Always includes one-shot Track B handoff payload logic in route output (`track_b_handoff_request` object or `null`).
+
 ## CLI: Track-A snapshot → report-friendly Excel
 
 Use this command to convert a `TrackASnapshot` JSON into a report-friendly workbook

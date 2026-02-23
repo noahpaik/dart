@@ -193,6 +193,7 @@ def test_cli_help_returns_success() -> None:
     assert "track-c-helpers" in result.stdout
     assert "track-c-route" in result.stdout
     assert "track-a-excel" in result.stdout
+    assert "step6-e2e" in result.stdout
 
 
 @pytest.mark.parametrize("command", ["tieout", "restatement", "coverage"])
@@ -574,6 +575,94 @@ def test_cli_track_c_route_rejects_invalid_role_alias_json(tmp_path: Path) -> No
 
     assert result.returncode == 2
     assert "role-alias-json" in result.stderr
+
+
+def test_cli_step6_e2e_offline_snapshot_and_xbrl_dir(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DART_API_KEY", raising=False)
+
+    snapshot_path = tmp_path / "offline_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(_track_a_snapshot_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    result = _run_cli(
+        "step6-e2e",
+        "--corp-name",
+        "Offline Corp",
+        "--bsns-year",
+        "2024",
+        "--snapshot-json",
+        str(snapshot_path),
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0
+    summary = json.loads(result.stdout)
+    assert "route" in summary["routing"]
+
+    artifacts = summary["artifacts"]
+    for key in (
+        "track_a_snapshot_json",
+        "track_a_snapshot_report_xlsx",
+        "track_c_route_json",
+        "track_c_route_xlsx",
+    ):
+        artifact = Path(artifacts[key])
+        resolved = artifact if artifact.is_absolute() else (tmp_path / artifact)
+        assert resolved.exists()
+
+    route_artifact = Path(artifacts["track_c_route_json"])
+    route_artifact_resolved = (
+        route_artifact if route_artifact.is_absolute() else (tmp_path / route_artifact)
+    )
+    route_payload = json.loads(route_artifact_resolved.read_text(encoding="utf-8"))
+    assert "decision" in route_payload
+    assert "route" in route_payload["decision"]
+    assert "track_b_handoff_request" in route_payload
+
+
+@pytest.mark.parametrize(
+    ("bsns_year", "threshold", "expected_error"),
+    [
+        ("20A4", "1.0", "--bsns-year"),
+        ("2024", "1.1", "threshold"),
+    ],
+)
+def test_cli_step6_e2e_rejects_invalid_year_or_threshold(
+    tmp_path: Path,
+    monkeypatch,
+    bsns_year: str,
+    threshold: str,
+    expected_error: str,
+) -> None:
+    monkeypatch.delenv("DART_API_KEY", raising=False)
+
+    snapshot_path = tmp_path / "offline_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(_track_a_snapshot_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    result = _run_cli(
+        "step6-e2e",
+        "--corp-name",
+        "Offline Corp",
+        "--bsns-year",
+        bsns_year,
+        "--threshold",
+        threshold,
+        "--snapshot-json",
+        str(snapshot_path),
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 2
+    assert expected_error.lower() in result.stderr.lower()
 
 
 def test_cli_track_a_excel_success_with_kpi_and_sorted_sheets(tmp_path: Path) -> None:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
+import shutil
+import zipfile
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
 
 from pydantic import ValidationError
@@ -15,7 +18,9 @@ from dart_pipeline.contracts import (
     Step6TrackCIntegrationResult,
     TrackASnapshot,
 )
-from dart_pipeline.pipeline_step6 import build_track_b_handoff_request
+from dart_pipeline.corp_code_db import CorpCodeDB, CorpCodeDbError
+from dart_pipeline.dart_api import DartApiClient, DartApiError
+from dart_pipeline.pipeline_step6 import build_track_a_snapshot, build_track_b_handoff_request
 from dart_pipeline.routing import route_by_coverage, route_from_track_c_roles
 from dart_pipeline.track_c import (
     extract_segment_members,
@@ -169,6 +174,67 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Excel output path under ./out (.xlsx)",
     )
 
+    step6_e2e = subparsers.add_parser(
+        "step6-e2e",
+        help="Run Step6 end-to-end flow (Track-A snapshot + Track-C route)",
+    )
+    step6_e2e.add_argument(
+        "--corp-name",
+        type=str,
+        required=True,
+        help="Corporation name for corp-code resolution",
+    )
+    step6_e2e.add_argument(
+        "--bsns-year",
+        type=str,
+        required=True,
+        help="Business year (YYYY)",
+    )
+    step6_e2e.add_argument(
+        "--required-role",
+        action="append",
+        default=None,
+        help="Required role code (repeatable)",
+    )
+    step6_e2e.add_argument(
+        "--critical-role",
+        action="append",
+        default=None,
+        help="Critical role code (repeatable)",
+    )
+    step6_e2e.add_argument(
+        "--threshold",
+        type=float,
+        default=1.0,
+        help="Coverage threshold in [0, 1] (default: 1.0)",
+    )
+    step6_e2e.add_argument(
+        "--role-alias-json",
+        type=str,
+        help="Optional JSON path for role alias map {alias: canonical_role}",
+    )
+    step6_e2e.add_argument(
+        "--allow-ofs-fallback",
+        action="store_true",
+        help="Allow OFS fallback when CFS rows return NO_DATA",
+    )
+    step6_e2e.add_argument(
+        "--db-path",
+        type=str,
+        default="data/corp_code.sqlite3",
+        help="Corp-code sqlite path (default: data/corp_code.sqlite3)",
+    )
+    step6_e2e.add_argument(
+        "--snapshot-json",
+        type=str,
+        help="Offline Track-A snapshot JSON override (no network)",
+    )
+    step6_e2e.add_argument(
+        "--xbrl-dir",
+        type=str,
+        help="Offline XBRL directory override (no network)",
+    )
+
     return parser
 
 
@@ -178,6 +244,126 @@ def _validate_threshold(threshold: float) -> float:
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError("--threshold must be within [0, 1]")
     return threshold
+
+
+_DEFAULT_STEP6_REQUIRED_ROLES = ["D822105", "D831150", "D838000", "D851100"]
+_DEFAULT_STEP6_CRITICAL_ROLES = ["D851100"]
+
+
+def _validate_bsns_year(value: str, argument_name: str = "--bsns-year") -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{argument_name} must be a 4-digit string")
+    normalized = value.strip()
+    if len(normalized) != 4 or not normalized.isdigit():
+        raise ValueError(f"{argument_name} must be a 4-digit string")
+    return normalized
+
+
+def _validate_corp_name(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("--corp-name must be a non-empty string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("--corp-name must be a non-empty string")
+    return normalized
+
+
+def _parse_track_a_snapshot_from_json_file(
+    snapshot_json_path: str,
+    *,
+    argument_name: str = "--snapshot-json",
+) -> TrackASnapshot:
+    snapshot_path = Path(snapshot_json_path)
+    try:
+        raw_json = snapshot_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"unable to read {argument_name} at {snapshot_path}: {exc}") from exc
+
+    try:
+        return TrackASnapshot.model_validate_json(raw_json)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {"loc": (), "msg": str(exc)}
+        location = ".".join(str(part) for part in first_error.get("loc", ()))
+        message = first_error.get("msg", "invalid payload")
+        detail = f"{location}: {message}" if location else message
+        raise ValueError(
+            f"{argument_name} is not a valid TrackASnapshot "
+            f"({detail})"
+        ) from exc
+
+
+def _is_safe_zip_member_path(name: str) -> bool:
+    normalized = name.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if path.is_absolute():
+        return False
+    if ".." in path.parts:
+        return False
+    if path.parts and ":" in path.parts[0]:
+        return False
+    return True
+
+
+def _extract_safe_zip_bytes_to_dir(
+    *,
+    zip_bytes: bytes,
+    output_dir: Path,
+) -> None:
+    if output_dir.exists() and output_dir.is_symlink():
+        raise ValueError("XBRL output directory must not be a symlink")
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            infos = archive.infolist()
+            if not infos:
+                raise ValueError("downloaded fnltt XBRL zip is empty")
+
+            if output_dir.exists():
+                if output_dir.is_dir():
+                    shutil.rmtree(output_dir)
+                else:
+                    output_dir.unlink()
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            file_count = 0
+            for info in infos:
+                if not _is_safe_zip_member_path(info.filename):
+                    raise ValueError(
+                        f"unsafe zip member path detected: {info.filename}"
+                    )
+
+                relative_path = PurePosixPath(info.filename.replace("\\", "/"))
+                target_path = output_dir.joinpath(*relative_path.parts)
+                if info.is_dir():
+                    target_path.mkdir(parents=True, exist_ok=True)
+                    continue
+
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info, "r") as source, target_path.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+                file_count += 1
+
+            if file_count == 0:
+                raise ValueError("downloaded fnltt XBRL zip has no files")
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"downloaded fnltt XBRL zip is malformed: {exc}") from exc
+    except KeyError as exc:
+        raise ValueError(f"downloaded fnltt XBRL zip entry is invalid: {exc}") from exc
+
+
+def _write_json_file(payload: Any, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    rendered = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+    output_path.write_text(rendered, encoding="utf-8")
+
+
+def _path_for_summary(path: Path, *, cwd: Path) -> str:
+    resolved_cwd = cwd.resolve(strict=False)
+    resolved_path = path.resolve(strict=False)
+    try:
+        return str(resolved_path.relative_to(resolved_cwd))
+    except ValueError:
+        return str(resolved_path)
 
 
 def _load_role_aliases(role_alias_json_path: str | None) -> dict[str, str] | None:
@@ -696,22 +882,10 @@ def _build_kpi_rows(snapshot: TrackASnapshot) -> list[dict[str, Any]]:
 
 def _build_track_a_excel_payload(snapshot_json_path: str, excel_output_path: str, cwd: Path) -> dict[str, Any]:
     snapshot_path = Path(snapshot_json_path)
-    try:
-        raw_json = snapshot_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ValueError(f"unable to read --snapshot-json at {snapshot_path}: {exc}") from exc
-
-    try:
-        snapshot = TrackASnapshot.model_validate_json(raw_json)
-    except ValidationError as exc:
-        first_error = exc.errors()[0] if exc.errors() else {"loc": (), "msg": str(exc)}
-        location = ".".join(str(part) for part in first_error.get("loc", ()))
-        message = first_error.get("msg", "invalid payload")
-        detail = f"{location}: {message}" if location else message
-        raise ValueError(
-            "--snapshot-json is not a valid TrackASnapshot "
-            f"({detail})"
-        ) from exc
+    snapshot = _parse_track_a_snapshot_from_json_file(
+        snapshot_json_path,
+        argument_name="--snapshot-json",
+    )
 
     output_path = _validate_excel_output_path(excel_output_path, cwd=cwd)
 
@@ -806,6 +980,198 @@ def _build_track_a_excel_payload(snapshot_json_path: str, excel_output_path: str
     }
 
 
+def _build_step6_e2e_payload(
+    *,
+    corp_name: str,
+    bsns_year: str,
+    required_roles: list[str] | None,
+    critical_roles: list[str] | None,
+    threshold: float,
+    role_alias_json_path: str | None,
+    allow_ofs_fallback: bool,
+    db_path: str,
+    snapshot_json_path: str | None,
+    xbrl_dir_path: str | None,
+    cwd: Path,
+) -> dict[str, Any]:
+    validated_corp_name = _validate_corp_name(corp_name)
+    validated_bsns_year = _validate_bsns_year(bsns_year)
+    validated_threshold = _validate_threshold(threshold)
+
+    roles_required = (
+        list(_DEFAULT_STEP6_REQUIRED_ROLES)
+        if required_roles is None
+        else list(required_roles)
+    )
+    roles_critical = (
+        list(_DEFAULT_STEP6_CRITICAL_ROLES)
+        if critical_roles is None
+        else list(critical_roles)
+    )
+
+    snapshot: TrackASnapshot
+    resolved_corp_name: str | None = None
+    api_client: DartApiClient | None = None
+
+    needs_api_client = snapshot_json_path is None or xbrl_dir_path is None
+    if needs_api_client:
+        api_client = DartApiClient()
+
+    if snapshot_json_path is not None:
+        snapshot = _parse_track_a_snapshot_from_json_file(
+            snapshot_json_path,
+            argument_name="--snapshot-json",
+        )
+        if snapshot.bsns_year != validated_bsns_year:
+            raise ValueError(
+                "--snapshot-json bsns_year does not match --bsns-year "
+                f"({snapshot.bsns_year} != {validated_bsns_year})"
+            )
+    else:
+        if api_client is None:
+            raise RuntimeError("internal error: api_client must be initialized")
+
+        with CorpCodeDB(db_path) as corp_db:
+            corp_db.refresh_from_api(api_client)
+            corp_record = corp_db.find_best_name_match(validated_corp_name)
+
+        if corp_record is None:
+            raise ValueError(
+                f"unable to resolve corp code for --corp-name '{validated_corp_name}'"
+            )
+
+        resolved_corp_name = corp_record.corp_name
+        snapshot = build_track_a_snapshot(
+            dart_api_client=api_client,
+            corp_code=corp_record.corp_code,
+            bsns_year=validated_bsns_year,
+            allow_ofs_fallback=allow_ofs_fallback,
+        )
+
+    stem = f"{snapshot.corp_code}_{validated_bsns_year}"
+    track_a_snapshot_json_path = _validate_output_path(
+        f"out/{stem}_track_a_snapshot.json",
+        cwd=cwd,
+        argument_name="step6-e2e output",
+    )
+    track_a_snapshot_excel_path = _validate_excel_output_path(
+        f"out/{stem}_track_a_snapshot_report.xlsx",
+        cwd=cwd,
+    )
+    track_c_route_json_path = _validate_output_path(
+        f"out/{stem}_track_c_route.json",
+        cwd=cwd,
+        argument_name="step6-e2e output",
+    )
+    track_c_route_excel_path = _validate_excel_output_path(
+        f"out/{stem}_track_c_route.xlsx",
+        cwd=cwd,
+    )
+
+    _write_json_file(snapshot.model_dump(mode="json"), track_a_snapshot_json_path)
+    _build_track_a_excel_payload(
+        str(track_a_snapshot_json_path),
+        str(track_a_snapshot_excel_path),
+        cwd=cwd,
+    )
+
+    xbrl_directory_for_routing: Path
+    downloaded_xbrl_dir_path: Path | None = None
+
+    if xbrl_dir_path is not None:
+        xbrl_directory_for_routing = Path(xbrl_dir_path).resolve(strict=False)
+        if not xbrl_directory_for_routing.exists() or not xbrl_directory_for_routing.is_dir():
+            raise ValueError("--xbrl-dir must point to an existing directory")
+    else:
+        if api_client is None:
+            raise RuntimeError("internal error: api_client must be initialized")
+
+        downloaded_xbrl_dir_path = _validate_output_path(
+            f"out/{stem}_xbrl",
+            cwd=cwd,
+            argument_name="step6-e2e output",
+        )
+        xbrl_zip_bytes = api_client.download_fnltt_xbrl_zip(
+            rcept_no=snapshot.rcept_no,
+            reprt_code=snapshot.reprt_code,
+        )
+        _extract_safe_zip_bytes_to_dir(
+            zip_bytes=xbrl_zip_bytes,
+            output_dir=downloaded_xbrl_dir_path,
+        )
+        xbrl_directory_for_routing = downloaded_xbrl_dir_path
+
+    route_payload = _build_track_c_route_payload(
+        xbrl_dir=str(xbrl_directory_for_routing),
+        required_roles=roles_required,
+        critical_roles=roles_critical,
+        threshold=validated_threshold,
+        role_alias_json_path=role_alias_json_path,
+        emit_handoff_request=True,
+        corp_code=snapshot.corp_code,
+        bsns_year=validated_bsns_year,
+        reprt_code=snapshot.reprt_code,
+        rcept_no=snapshot.rcept_no,
+        rcept_dt=snapshot.rcept_dt,
+        fs_div=snapshot.fs_div,
+    )
+    _write_json_file(route_payload, track_c_route_json_path)
+    _write_track_c_route_excel(route_payload, track_c_route_excel_path)
+
+    decision = route_payload.get("decision")
+    report = route_payload.get("report")
+
+    return {
+        "corp": {
+            "corp_name_input": validated_corp_name,
+            "corp_name_resolved": resolved_corp_name,
+            "corp_code": snapshot.corp_code,
+            "bsns_year": validated_bsns_year,
+            "reprt_code": snapshot.reprt_code,
+            "rcept_no": snapshot.rcept_no,
+            "rcept_dt": snapshot.rcept_dt,
+            "fs_div": snapshot.fs_div,
+        },
+        "routing": {
+            "route": decision.get("route") if isinstance(decision, dict) else None,
+            "reason_code": (
+                decision.get("reason_code") if isinstance(decision, dict) else None
+            ),
+            "fallback_required": route_payload.get("fallback_required"),
+            "coverage_score": (
+                report.get("coverage_score") if isinstance(report, dict) else None
+            ),
+        },
+        "artifacts": {
+            "track_a_snapshot_json": _path_for_summary(
+                track_a_snapshot_json_path,
+                cwd=cwd,
+            ),
+            "track_a_snapshot_report_xlsx": _path_for_summary(
+                track_a_snapshot_excel_path,
+                cwd=cwd,
+            ),
+            "track_c_route_json": _path_for_summary(
+                track_c_route_json_path,
+                cwd=cwd,
+            ),
+            "track_c_route_xlsx": _path_for_summary(
+                track_c_route_excel_path,
+                cwd=cwd,
+            ),
+            "xbrl_dir": _path_for_summary(
+                xbrl_directory_for_routing,
+                cwd=cwd,
+            ),
+            "downloaded_xbrl_dir": (
+                _path_for_summary(downloaded_xbrl_dir_path, cwd=cwd)
+                if downloaded_xbrl_dir_path is not None
+                else None
+            ),
+        },
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -846,6 +1212,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cwd=Path.cwd().resolve(),
             )
         except ValueError as exc:
+            parser.exit(status=2, message=f"error: {exc}\n")
+    elif args.command == "step6-e2e":
+        try:
+            payload = _build_step6_e2e_payload(
+                corp_name=args.corp_name,
+                bsns_year=args.bsns_year,
+                required_roles=args.required_role,
+                critical_roles=args.critical_role,
+                threshold=args.threshold,
+                role_alias_json_path=args.role_alias_json,
+                allow_ofs_fallback=args.allow_ofs_fallback,
+                db_path=args.db_path,
+                snapshot_json_path=args.snapshot_json,
+                xbrl_dir_path=args.xbrl_dir,
+                cwd=Path.cwd().resolve(),
+            )
+        except (ValueError, DartApiError, CorpCodeDbError) as exc:
             parser.exit(status=2, message=f"error: {exc}\n")
     else:
         payload = _run_command(args.command)

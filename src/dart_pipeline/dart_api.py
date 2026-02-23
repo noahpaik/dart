@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import zipfile
 from enum import Enum
 from pathlib import PurePosixPath
@@ -44,6 +45,8 @@ class DartApiError(Exception):
 
 
 _REDACTED_API_KEY = "[REDACTED_API_KEY]"
+_STATUS_TAG_PATTERN = re.compile(r"<status>\s*([^<]+)\s*</status>", re.IGNORECASE)
+_MESSAGE_TAG_PATTERN = re.compile(r"<message>\s*([^<]+)\s*</message>", re.IGNORECASE)
 
 
 def _is_safe_zip_member_name(name: str) -> bool:
@@ -194,6 +197,28 @@ class DartApiClient:
             )
         return payload
 
+    def _extract_xml_status_message(self, payload_bytes: bytes) -> tuple[str | None, str | None]:
+        if not payload_bytes:
+            return None, None
+
+        decoded = payload_bytes.decode("utf-8", errors="ignore")
+        status_match = _STATUS_TAG_PATTERN.search(decoded)
+        if status_match is None:
+            return None, None
+
+        status = status_match.group(1).strip()
+        if not status:
+            return None, None
+
+        message_match = _MESSAGE_TAG_PATTERN.search(decoded)
+        if message_match is None:
+            return status, None
+
+        message = message_match.group(1).strip()
+        if not message:
+            return status, None
+        return status, message
+
     def _extract_dart_status(
         self,
         payload: Mapping[str, Any],
@@ -258,9 +283,72 @@ class DartApiClient:
         except KeyError as exc:
             self._raise(DartApiErrorCode.MALFORMED_ZIP, f"invalid zip entry: {exc}")
 
+    def _validate_fnltt_xbrl_zip(self, zip_bytes: bytes) -> None:
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+                infos = archive.infolist()
+                if not infos:
+                    self._raise(
+                        DartApiErrorCode.MALFORMED_ZIP,
+                        "fnltt xbrl zip is empty",
+                    )
+
+                file_member_count = 0
+                for info in infos:
+                    if not _is_safe_zip_member_name(info.filename):
+                        self._raise(
+                            DartApiErrorCode.MALFORMED_ZIP,
+                            f"unsafe zip member path detected: {info.filename}",
+                        )
+                    if not info.is_dir():
+                        file_member_count += 1
+
+                if file_member_count == 0:
+                    self._raise(
+                        DartApiErrorCode.MALFORMED_ZIP,
+                        "fnltt xbrl zip has no files",
+                    )
+        except zipfile.BadZipFile as exc:
+            self._raise(DartApiErrorCode.MALFORMED_ZIP, f"invalid zip bytes: {exc}")
+        except KeyError as exc:
+            self._raise(DartApiErrorCode.MALFORMED_ZIP, f"invalid zip entry: {exc}")
+
     def download_corp_code_zip(self) -> bytes:
         zip_bytes = self._request_bytes(endpoint="corpCode.xml", params={})
         self._validate_corp_zip(zip_bytes)
+        return zip_bytes
+
+    def download_fnltt_xbrl_zip(self, *, rcept_no: str, reprt_code: str) -> bytes:
+        if not isinstance(rcept_no, str) or not rcept_no.strip():
+            raise ValueError("rcept_no must be a non-empty string")
+        if not isinstance(reprt_code, str) or not reprt_code.strip():
+            raise ValueError("reprt_code must be a non-empty string")
+
+        zip_bytes = self._request_bytes(
+            endpoint="fnlttXbrl.xml",
+            params={
+                "rcept_no": rcept_no.strip(),
+                "reprt_code": reprt_code.strip(),
+            },
+        )
+
+        if not zipfile.is_zipfile(io.BytesIO(zip_bytes)):
+            status, message = self._extract_xml_status_message(zip_bytes)
+            if status is not None:
+                detail = "fnlttXbrl.xml returned status payload instead of zip bytes"
+                if message is not None:
+                    detail = f"{detail}: {message}"
+                self._raise(
+                    DartApiErrorCode.DART_ERROR,
+                    detail,
+                    status=status,
+                )
+            self._raise(
+                DartApiErrorCode.MALFORMED_ZIP,
+                "fnlttXbrl.xml did not return zip bytes",
+            )
+
+        self._validate_fnltt_xbrl_zip(zip_bytes)
         return zip_bytes
 
     def list_reports(

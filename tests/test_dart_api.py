@@ -286,3 +286,53 @@ def test_download_corp_code_zip_success(monkeypatch) -> None:
 
     downloaded = client.download_corp_code_zip()
     assert downloaded == corp_zip
+
+
+def test_download_fnltt_xbrl_zip_success(monkeypatch) -> None:
+    xbrl_zip = _zip_bytes(
+        {
+            "entity00134477_2025-12-31_pre.xml": b"<result></result>",
+            "entity00134477_2025-12-31_lab-ko.xml": b"<result></result>",
+        }
+    )
+
+    def fake_get(url: str, params: dict, timeout: float, stream: bool = False) -> FakeResponse:
+        assert url.endswith("/fnlttXbrl.xml")
+        assert params["rcept_no"] == "20250331000001"
+        assert params["reprt_code"] == "11011"
+        assert "crtfc_key" in params
+        return FakeResponse(content=xbrl_zip)
+
+    monkeypatch.setattr("dart_pipeline.dart_api.requests.get", fake_get)
+    client = DartApiClient()
+
+    downloaded = client.download_fnltt_xbrl_zip(
+        rcept_no="20250331000001",
+        reprt_code="11011",
+    )
+    assert downloaded == xbrl_zip
+
+
+def test_download_fnltt_xbrl_zip_status_payload_raises_dart_error(monkeypatch) -> None:
+    status_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<result>
+  <status>014</status>
+  <message>file does not exist</message>
+</result>
+"""
+
+    def fake_get(url: str, params: dict, timeout: float, stream: bool = False) -> FakeResponse:
+        return FakeResponse(content=status_xml)
+
+    monkeypatch.setattr("dart_pipeline.dart_api.requests.get", fake_get)
+    client = DartApiClient()
+
+    with pytest.raises(DartApiError) as exc_info:
+        client.download_fnltt_xbrl_zip(
+            rcept_no="20250331000001",
+            reprt_code="11011",
+        )
+
+    assert exc_info.value.code == DartApiErrorCode.DART_ERROR
+    assert exc_info.value.status == "014"
+    assert "file does not exist" in str(exc_info.value)
