@@ -206,6 +206,37 @@ Behavior:
 - Optional `--role-alias-json <path>` supports alias map JSON (`{"role_sga":"D831150"}`) for required/critical roles.
 - Exits with status `2` and an argparse-style error for invalid `--xbrl-dir`, invalid `--threshold` (`[0,1]`), invalid `--role-alias-json`, or invalid routing input.
 
+## CLI: Track C route with one-shot Track B handoff payload
+
+Use `--emit-handoff-request` to include deterministic Track B handoff contract output in the
+`track-c-route` response.
+
+```bash
+PYTHONPATH=src python3 -m dart_pipeline.cli \
+  track-c-route \
+  --xbrl-dir tests/fixtures/track_c/basic_bundle \
+  --required-role D822105 \
+  --required-role D831150 \
+  --required-role D838000 \
+  --required-role D851100 \
+  --critical-role D851100 \
+  --threshold 1.0 \
+  --emit-handoff-request \
+  --corp-code 00126380 \
+  --bsns-year 2024 \
+  --rcept-no 20240301000001 \
+  --rcept-dt 20240301
+```
+
+Metadata args:
+- Required when `--emit-handoff-request` is set: `--corp-code`, `--bsns-year`, `--rcept-no`, `--rcept-dt`.
+- Optional with defaults: `--reprt-code` (`11011`), `--fs-div` (`CFS`).
+
+Response behavior:
+- If `decision.route == TRACK_B_FALLBACK`, output includes `track_b_handoff_request` as a contract JSON object.
+- If `decision.route == TRACK_C`, output includes `track_b_handoff_request: null`.
+- Missing or invalid metadata args exit with status `2` and an argparse-style error.
+
 ## Behavior policy (Step6)
 
 - Scope is annual reports only: `reprt_code=11011`.

@@ -8,7 +8,12 @@ from typing import Any, Sequence
 
 from pydantic import ValidationError
 
-from dart_pipeline.contracts import Route, RoutingReasonCode, Step6TrackCIntegrationResult
+from dart_pipeline.contracts import (
+    Route,
+    RoutingReasonCode,
+    Step6TrackCIntegrationResult,
+    TrackASnapshot,
+)
 from dart_pipeline.pipeline_step6 import build_track_b_handoff_request
 from dart_pipeline.routing import route_by_coverage, route_from_track_c_roles
 from dart_pipeline.track_c import (
@@ -103,6 +108,43 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         help="Optional JSON path for role alias map {alias: canonical_role}",
     )
+    track_c_route.add_argument(
+        "--emit-handoff-request",
+        action="store_true",
+        help="Emit one-shot Track-B handoff request payload for fallback routes",
+    )
+    track_c_route.add_argument(
+        "--corp-code",
+        type=str,
+        help="Corp code metadata for --emit-handoff-request",
+    )
+    track_c_route.add_argument(
+        "--bsns-year",
+        type=str,
+        help="Business year metadata for --emit-handoff-request (YYYY)",
+    )
+    track_c_route.add_argument(
+        "--reprt-code",
+        type=str,
+        default="11011",
+        help="Report code metadata for --emit-handoff-request (default: 11011)",
+    )
+    track_c_route.add_argument(
+        "--rcept-no",
+        type=str,
+        help="Receipt number metadata for --emit-handoff-request",
+    )
+    track_c_route.add_argument(
+        "--rcept-dt",
+        type=str,
+        help="Receipt date metadata for --emit-handoff-request (YYYYMMDD)",
+    )
+    track_c_route.add_argument(
+        "--fs-div",
+        type=str,
+        default="CFS",
+        help="FS division metadata for --emit-handoff-request (default: CFS)",
+    )
 
     return parser
 
@@ -150,6 +192,61 @@ def _load_role_aliases(role_alias_json_path: str | None) -> dict[str, str] | Non
         aliases[alias] = canonical
 
     return aliases
+
+
+def _require_non_empty_metadata_arg(value: str | None, argument_name: str) -> str:
+    if value is None:
+        raise ValueError(f"{argument_name} is required")
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError(f"{argument_name} must be a non-empty string")
+    return stripped
+
+
+def _validate_emit_handoff_metadata(
+    *,
+    corp_code: str | None,
+    bsns_year: str | None,
+    reprt_code: str,
+    rcept_no: str | None,
+    rcept_dt: str | None,
+    fs_div: str,
+) -> dict[str, str]:
+    missing_args: list[str] = []
+    if corp_code is None:
+        missing_args.append("--corp-code")
+    if bsns_year is None:
+        missing_args.append("--bsns-year")
+    if rcept_no is None:
+        missing_args.append("--rcept-no")
+    if rcept_dt is None:
+        missing_args.append("--rcept-dt")
+    if missing_args:
+        raise ValueError(
+            "--emit-handoff-request requires "
+            + ", ".join(missing_args)
+        )
+
+    validated_corp_code = _require_non_empty_metadata_arg(corp_code, "--corp-code")
+    validated_bsns_year = _require_non_empty_metadata_arg(bsns_year, "--bsns-year")
+    validated_reprt_code = _require_non_empty_metadata_arg(reprt_code, "--reprt-code")
+    validated_rcept_no = _require_non_empty_metadata_arg(rcept_no, "--rcept-no")
+    validated_rcept_dt = _require_non_empty_metadata_arg(rcept_dt, "--rcept-dt")
+    validated_fs_div = _require_non_empty_metadata_arg(fs_div, "--fs-div")
+
+    if len(validated_bsns_year) != 4 or not validated_bsns_year.isdigit():
+        raise ValueError("--bsns-year must be a 4-digit string")
+    if len(validated_rcept_dt) != 8 or not validated_rcept_dt.isdigit():
+        raise ValueError("--rcept-dt must be an 8-digit YYYYMMDD string")
+
+    return {
+        "corp_code": validated_corp_code,
+        "bsns_year": validated_bsns_year,
+        "reprt_code": validated_reprt_code,
+        "rcept_no": validated_rcept_no,
+        "rcept_dt": validated_rcept_dt,
+        "fs_div": validated_fs_div,
+    }
 
 
 def _demo_tieout() -> dict[str, Any]:
@@ -307,6 +404,13 @@ def _build_track_c_route_payload(
     critical_roles: list[str],
     threshold: float,
     role_alias_json_path: str | None,
+    emit_handoff_request: bool,
+    corp_code: str | None,
+    bsns_year: str | None,
+    reprt_code: str,
+    rcept_no: str | None,
+    rcept_dt: str | None,
+    fs_div: str,
 ) -> dict[str, Any]:
     threshold = _validate_threshold(threshold)
     role_aliases = _load_role_aliases(role_alias_json_path)
@@ -323,11 +427,45 @@ def _build_track_c_route_payload(
             "invalid routing input for track-c-route "
             "(check --required-role, --critical-role, and --threshold)"
         )
-    return {
+    payload: dict[str, Any] = {
         "decision": decision.model_dump(mode="json"),
         "report": report.model_dump(mode="json") if report is not None else None,
         "fallback_required": decision.route == Route.TRACK_B_FALLBACK,
     }
+    if not emit_handoff_request:
+        return payload
+
+    metadata = _validate_emit_handoff_metadata(
+        corp_code=corp_code,
+        bsns_year=bsns_year,
+        reprt_code=reprt_code,
+        rcept_no=rcept_no,
+        rcept_dt=rcept_dt,
+        fs_div=fs_div,
+    )
+    if decision.route == Route.TRACK_C:
+        payload["track_b_handoff_request"] = None
+        return payload
+
+    integration_result = Step6TrackCIntegrationResult(
+        track_a_snapshot=TrackASnapshot(
+            corp_code=metadata["corp_code"],
+            rcept_no=metadata["rcept_no"],
+            rcept_dt=metadata["rcept_dt"],
+            bsns_year=metadata["bsns_year"],
+            reprt_code=metadata["reprt_code"],
+            fs_div=metadata["fs_div"],
+            rows=[],
+        ),
+        track_c_notes=[],
+        routing_decision=decision,
+        coverage_report=report,
+        fallback_required=True,
+    )
+    payload["track_b_handoff_request"] = build_track_b_handoff_request(
+        integration_result=integration_result
+    ).model_dump(mode="json")
+    return payload
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -352,6 +490,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 critical_roles=args.critical_role,
                 threshold=args.threshold,
                 role_alias_json_path=args.role_alias_json,
+                emit_handoff_request=args.emit_handoff_request,
+                corp_code=args.corp_code,
+                bsns_year=args.bsns_year,
+                reprt_code=args.reprt_code,
+                rcept_no=args.rcept_no,
+                rcept_dt=args.rcept_dt,
+                fs_div=args.fs_div,
             )
         except ValueError as exc:
             parser.exit(status=2, message=f"error: {exc}\n")

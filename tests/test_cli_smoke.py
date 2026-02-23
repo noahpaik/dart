@@ -327,6 +327,102 @@ def test_cli_track_c_route_critical_missing_fallback() -> None:
     assert payload["fallback_required"] is True
 
 
+def test_cli_track_c_route_emit_handoff_request_fallback() -> None:
+    result = _run_cli(
+        "track-c-route",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        "--required-role",
+        "D822105",
+        "--required-role",
+        "D831150",
+        "--required-role",
+        "D838000",
+        "--required-role",
+        "D851100",
+        "--critical-role",
+        "D851100",
+        "--threshold",
+        "1.0",
+        "--emit-handoff-request",
+        "--corp-code",
+        "00126380",
+        "--bsns-year",
+        "2024",
+        "--rcept-no",
+        "20240301000001",
+        "--rcept-dt",
+        "20240301",
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    handoff_request = payload["track_b_handoff_request"]
+    assert payload["decision"]["route"] == "TRACK_B_FALLBACK"
+    assert handoff_request is not None
+    assert isinstance(handoff_request["idempotency_key"], str)
+    assert len(handoff_request["idempotency_key"]) == 64
+    assert handoff_request["reason_code"] == payload["decision"]["reason_code"]
+    assert handoff_request["missing_roles"] == payload["report"]["missing_roles"]
+    assert (
+        handoff_request["critical_missing_roles"]
+        == payload["report"]["critical_missing_roles"]
+    )
+
+
+def test_cli_track_c_route_emit_handoff_request_track_c_is_null() -> None:
+    result = _run_cli(
+        "track-c-route",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        "--required-role",
+        "D822105",
+        "--required-role",
+        "D831150",
+        "--required-role",
+        "D838000",
+        "--threshold",
+        "1.0",
+        "--emit-handoff-request",
+        "--corp-code",
+        "00126380",
+        "--bsns-year",
+        "2024",
+        "--rcept-no",
+        "20240301000001",
+        "--rcept-dt",
+        "20240301",
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["decision"]["route"] == "TRACK_C"
+    assert payload["track_b_handoff_request"] is None
+
+
+def test_cli_track_c_route_emit_handoff_request_requires_metadata() -> None:
+    result = _run_cli(
+        "track-c-route",
+        "--xbrl-dir",
+        str(TRACK_C_FIXTURE_DIR),
+        "--required-role",
+        "D822105",
+        "--threshold",
+        "1.0",
+        "--emit-handoff-request",
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 2
+    assert "--emit-handoff-request requires" in result.stderr
+    assert "--corp-code" in result.stderr
+    assert "--bsns-year" in result.stderr
+    assert "--rcept-no" in result.stderr
+    assert "--rcept-dt" in result.stderr
+
+
 def test_cli_track_c_route_rejects_invalid_threshold() -> None:
     result = _run_cli(
         "track-c-route",
