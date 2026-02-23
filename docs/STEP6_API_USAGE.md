@@ -204,7 +204,29 @@ Behavior:
 - Prints JSON with `decision`, `report`, and `fallback_required`.
 - `fallback_required=true` when `decision.route` is `TRACK_B_FALLBACK`.
 - Optional `--role-alias-json <path>` supports alias map JSON (`{"role_sga":"D831150"}`) for required/critical roles.
-- Exits with status `2` and an argparse-style error for invalid `--xbrl-dir`, invalid `--threshold` (`[0,1]`), invalid `--role-alias-json`, or invalid routing input.
+- Optional `--excel-output out/<name>.xlsx` writes an Excel workbook (`summary`, `roles`, `track_b_handoff_request`) under `./out`.
+- Exits with status `2` and an argparse-style error for invalid `--xbrl-dir`, invalid `--threshold` (`[0,1]`), invalid `--role-alias-json`, invalid `--excel-output`, or invalid routing input.
+
+## CLI: Track-A snapshot → report-friendly Excel
+
+Use this command to convert a `TrackASnapshot` JSON into a report-friendly workbook
+with KPI + statement tabs.
+
+```bash
+PYTHONPATH=src python3 -m dart_pipeline.cli \
+  track-a-excel \
+  --snapshot-json out/samsung_2024_track_a_snapshot.json \
+  --excel-output out/samsung_2024_track_a_snapshot_report.xlsx
+```
+
+Workbook tabs:
+- `kpi_summary`: Revenue/Operating Income/Net Income + YoY + Margin
+- `metadata`: corp/report metadata and row count
+- `BS`, `IS`, `CIS`, `CF`, `SCE`: statement-wise rows sorted by `ord`
+
+Constraints:
+- `--excel-output` must be an `.xlsx` path under `./out`
+- invalid snapshot JSON or path constraint violations exit with status `2`
 
 ## CLI: Track C route with one-shot Track B handoff payload
 
@@ -225,12 +247,14 @@ PYTHONPATH=src python3 -m dart_pipeline.cli \
   --corp-code 00126380 \
   --bsns-year 2024 \
   --rcept-no 20240301000001 \
-  --rcept-dt 20240301
+  --rcept-dt 20240301 \
+  --excel-output out/track_c_route_handoff.xlsx
 ```
 
 Metadata args:
 - Required when `--emit-handoff-request` is set: `--corp-code`, `--bsns-year`, `--rcept-no`, `--rcept-dt`.
 - Optional with defaults: `--reprt-code` (`11011`), `--fs-div` (`CFS`).
+- Optional `--excel-output`: `./out` 하위 `.xlsx` 경로에 결과 워크북 저장.
 
 Response behavior:
 - If `decision.route == TRACK_B_FALLBACK`, output includes `track_b_handoff_request` as a contract JSON object.

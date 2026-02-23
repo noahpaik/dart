@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -144,6 +145,28 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="CFS",
         help="FS division metadata for --emit-handoff-request (default: CFS)",
+    )
+    track_c_route.add_argument(
+        "--excel-output",
+        type=str,
+        help="Optional Excel output path under ./out (.xlsx)",
+    )
+
+    track_a_excel = subparsers.add_parser(
+        "track-a-excel",
+        help="Build a report-friendly Track-A Excel workbook from snapshot JSON",
+    )
+    track_a_excel.add_argument(
+        "--snapshot-json",
+        type=str,
+        required=True,
+        help="Path to a TrackASnapshot JSON file",
+    )
+    track_a_excel.add_argument(
+        "--excel-output",
+        type=str,
+        required=True,
+        help="Excel output path under ./out (.xlsx)",
     )
 
     return parser
@@ -323,10 +346,16 @@ def _demo_coverage() -> dict[str, Any]:
     }
 
 
-def _validate_output_path(raw_output: str, cwd: Path) -> Path:
+def _validate_output_path(
+    raw_output: str,
+    cwd: Path,
+    argument_name: str = "--output",
+) -> Path:
     output = Path(raw_output)
     if any(part == ".." for part in output.parts):
-        raise ValueError("--output must not contain '..' path traversal segments")
+        raise ValueError(
+            f"{argument_name} must not contain '..' path traversal segments"
+        )
 
     out_root = cwd / "out"
     if out_root.is_symlink():
@@ -339,10 +368,10 @@ def _validate_output_path(raw_output: str, cwd: Path) -> Path:
     try:
         resolved_target.relative_to(resolved_out_root)
     except ValueError as exc:
-        raise ValueError("--output must resolve to a path under ./out") from exc
+        raise ValueError(f"{argument_name} must resolve to a path under ./out") from exc
 
     if resolved_target == resolved_out_root:
-        raise ValueError("--output must point to a file path under ./out")
+        raise ValueError(f"{argument_name} must point to a file path under ./out")
 
     return resolved_target
 
@@ -468,6 +497,315 @@ def _build_track_c_route_payload(
     return payload
 
 
+def _validate_excel_output_path(raw_output: str, cwd: Path) -> Path:
+    output_path = _validate_output_path(
+        raw_output,
+        cwd=cwd,
+        argument_name="--excel-output",
+    )
+    if output_path.suffix.lower() != ".xlsx":
+        raise ValueError("--excel-output must end with .xlsx")
+    return output_path
+
+
+def _to_excel_cell_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _write_track_c_route_excel(payload: dict[str, Any], output_path: Path) -> None:
+    try:
+        from openpyxl import Workbook
+    except ModuleNotFoundError as exc:
+        raise ValueError(
+            "openpyxl is required for --excel-output. Install dependencies first."
+        ) from exc
+
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "summary"
+    summary_sheet.append(["field", "value"])
+
+    decision = payload.get("decision")
+    report = payload.get("report")
+    summary_sheet.append([
+        "route",
+        decision.get("route") if isinstance(decision, dict) else None,
+    ])
+    summary_sheet.append([
+        "reason_code",
+        decision.get("reason_code") if isinstance(decision, dict) else None,
+    ])
+    summary_sheet.append(["fallback_required", payload.get("fallback_required")])
+    summary_sheet.append([
+        "coverage_score",
+        report.get("coverage_score") if isinstance(report, dict) else None,
+    ])
+
+    roles_sheet = workbook.create_sheet("roles")
+    roles_sheet.append(["group", "role"])
+    if isinstance(report, dict):
+        for group_name in (
+            "required_roles",
+            "found_roles",
+            "missing_roles",
+            "critical_missing_roles",
+        ):
+            group_values = report.get(group_name)
+            if not isinstance(group_values, list):
+                continue
+            for role in group_values:
+                roles_sheet.append([group_name, _to_excel_cell_value(role)])
+
+    handoff_sheet = workbook.create_sheet("track_b_handoff_request")
+    handoff_sheet.append(["field", "value"])
+    handoff_payload = payload.get("track_b_handoff_request")
+    if isinstance(handoff_payload, dict):
+        for key in sorted(handoff_payload):
+            handoff_sheet.append([key, _to_excel_cell_value(handoff_payload[key])])
+    else:
+        handoff_sheet.append(["value", None])
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_path)
+
+
+_TRACK_A_SHEET_ORDER = ("BS", "IS", "CIS", "CF", "SCE")
+_TRACK_A_EXPORT_COLUMNS = (
+    "ord",
+    "account_id",
+    "account_nm",
+    "thstrm_amount",
+    "frmtrm_amount",
+    "bfefrmtrm_amount",
+    "thstrm_amount_raw",
+    "frmtrm_amount_raw",
+    "bfefrmtrm_amount_raw",
+    "source_row_idx",
+)
+
+
+def _to_excel_numeric(value: Any) -> int | float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    return None
+
+
+def _safe_ratio(numerator: int | float | None, denominator: int | float | None) -> float | None:
+    if numerator is None or denominator is None:
+        return None
+    if denominator == 0:
+        return None
+    return float(numerator) / float(denominator)
+
+
+def _safe_growth(current: int | float | None, prior: int | float | None) -> float | None:
+    if current is None or prior is None:
+        return None
+    if prior == 0:
+        return None
+    return (float(current) - float(prior)) / abs(float(prior))
+
+
+def _find_is_row(snapshot: TrackASnapshot, account_ids: tuple[str, ...]) -> Any:
+    is_rows = [row for row in snapshot.rows if row.sj_div == "IS"]
+    for account_id in account_ids:
+        for row in is_rows:
+            if row.account_id == account_id:
+                return row
+    return None
+
+
+def _build_kpi_rows(snapshot: TrackASnapshot) -> list[dict[str, Any]]:
+    revenue_row = _find_is_row(snapshot, ("ifrs-full_Revenue", "dart_Revenue"))
+    operating_income_row = _find_is_row(
+        snapshot,
+        (
+            "dart_OperatingIncomeLoss",
+            "ifrs-full_ProfitLossFromOperatingActivities",
+        ),
+    )
+    net_income_row = _find_is_row(
+        snapshot,
+        (
+            "ifrs-full_ProfitLoss",
+            "ifrs-full_ProfitLossAttributableToOwnersOfParent",
+        ),
+    )
+
+    revenue_current = _to_excel_numeric(
+        None if revenue_row is None else revenue_row.thstrm_amount
+    )
+    revenue_prior = _to_excel_numeric(
+        None if revenue_row is None else revenue_row.frmtrm_amount
+    )
+    operating_current = _to_excel_numeric(
+        None if operating_income_row is None else operating_income_row.thstrm_amount
+    )
+    operating_prior = _to_excel_numeric(
+        None if operating_income_row is None else operating_income_row.frmtrm_amount
+    )
+    net_current = _to_excel_numeric(
+        None if net_income_row is None else net_income_row.thstrm_amount
+    )
+    net_prior = _to_excel_numeric(
+        None if net_income_row is None else net_income_row.frmtrm_amount
+    )
+
+    return [
+        {
+            "metric": "Revenue",
+            "label_ko": "매출액",
+            "account_id": None if revenue_row is None else revenue_row.account_id,
+            "current": revenue_current,
+            "prior": revenue_prior,
+            "yoy": _safe_growth(revenue_current, revenue_prior),
+            "margin": None,
+        },
+        {
+            "metric": "OperatingIncome",
+            "label_ko": "영업이익",
+            "account_id": (
+                None if operating_income_row is None else operating_income_row.account_id
+            ),
+            "current": operating_current,
+            "prior": operating_prior,
+            "yoy": _safe_growth(operating_current, operating_prior),
+            "margin": _safe_ratio(operating_current, revenue_current),
+        },
+        {
+            "metric": "NetIncome",
+            "label_ko": "당기순이익",
+            "account_id": None if net_income_row is None else net_income_row.account_id,
+            "current": net_current,
+            "prior": net_prior,
+            "yoy": _safe_growth(net_current, net_prior),
+            "margin": _safe_ratio(net_current, revenue_current),
+        },
+    ]
+
+
+def _build_track_a_excel_payload(snapshot_json_path: str, excel_output_path: str, cwd: Path) -> dict[str, Any]:
+    snapshot_path = Path(snapshot_json_path)
+    try:
+        raw_json = snapshot_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"unable to read --snapshot-json at {snapshot_path}: {exc}") from exc
+
+    try:
+        snapshot = TrackASnapshot.model_validate_json(raw_json)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {"loc": (), "msg": str(exc)}
+        location = ".".join(str(part) for part in first_error.get("loc", ()))
+        message = first_error.get("msg", "invalid payload")
+        detail = f"{location}: {message}" if location else message
+        raise ValueError(
+            "--snapshot-json is not a valid TrackASnapshot "
+            f"({detail})"
+        ) from exc
+
+    output_path = _validate_excel_output_path(excel_output_path, cwd=cwd)
+
+    try:
+        from openpyxl import Workbook
+    except ModuleNotFoundError as exc:
+        raise ValueError(
+            "openpyxl is required for --excel-output. Install dependencies first."
+        ) from exc
+
+    workbook = Workbook()
+
+    kpi_sheet = workbook.active
+    kpi_sheet.title = "kpi_summary"
+    kpi_sheet.append(["metric", "label_ko", "account_id", "current", "prior", "yoy", "margin"])
+    for row in _build_kpi_rows(snapshot):
+        kpi_sheet.append([
+            row["metric"],
+            row["label_ko"],
+            row["account_id"],
+            row["current"],
+            row["prior"],
+            row["yoy"],
+            row["margin"],
+        ])
+
+    metadata_sheet = workbook.create_sheet("metadata")
+    metadata_sheet.append(["field", "value"])
+    for field_name in (
+        "corp_code",
+        "rcept_no",
+        "rcept_dt",
+        "bsns_year",
+        "reprt_code",
+        "fs_div",
+    ):
+        metadata_sheet.append([field_name, getattr(snapshot, field_name)])
+    metadata_sheet.append(["row_count", len(snapshot.rows)])
+
+    rows_by_sj_div: dict[str, list[Any]] = {sj_div: [] for sj_div in _TRACK_A_SHEET_ORDER}
+    for row in snapshot.rows:
+        rows_by_sj_div.setdefault(row.sj_div, []).append(row)
+
+    for sj_div in _TRACK_A_SHEET_ORDER:
+        sheet = workbook.create_sheet(sj_div)
+        sheet.append(list(_TRACK_A_EXPORT_COLUMNS))
+        sorted_rows = sorted(
+            rows_by_sj_div.get(sj_div, []),
+            key=lambda row: (
+                row.ord,
+                row.account_id,
+                row.account_nm,
+                row.source_row_idx,
+            ),
+        )
+        for row in sorted_rows:
+            sheet.append([
+                row.ord,
+                row.account_id,
+                row.account_nm,
+                _to_excel_numeric(row.thstrm_amount),
+                _to_excel_numeric(row.frmtrm_amount),
+                _to_excel_numeric(row.bfefrmtrm_amount),
+                row.thstrm_amount_raw,
+                row.frmtrm_amount_raw,
+                row.bfefrmtrm_amount_raw,
+                row.source_row_idx,
+            ])
+
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = f"A1:J{max(sheet.max_row, 1)}"
+        for amount_col in ("D", "E", "F"):
+            for cell in sheet[f"{amount_col}2":f"{amount_col}{sheet.max_row}"]:
+                for item in cell:
+                    item.number_format = "#,##0"
+
+    kpi_sheet.freeze_panes = "A2"
+    kpi_sheet.auto_filter.ref = f"A1:G{max(kpi_sheet.max_row, 1)}"
+    for ratio_col in ("F", "G"):
+        for cell in kpi_sheet[f"{ratio_col}2":f"{ratio_col}{kpi_sheet.max_row}"]:
+            for item in cell:
+                item.number_format = "0.00%"
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_path)
+
+    return {
+        "snapshot_json": str(snapshot_path),
+        "excel_output": str(output_path),
+        "sheet_names": workbook.sheetnames,
+        "row_count": len(snapshot.rows),
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -500,19 +838,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except ValueError as exc:
             parser.exit(status=2, message=f"error: {exc}\n")
+    elif args.command == "track-a-excel":
+        try:
+            payload = _build_track_a_excel_payload(
+                args.snapshot_json,
+                args.excel_output,
+                cwd=Path.cwd().resolve(),
+            )
+        except ValueError as exc:
+            parser.exit(status=2, message=f"error: {exc}\n")
     else:
         payload = _run_command(args.command)
 
     rendered = json.dumps(payload, sort_keys=True, indent=2) + "\n"
 
+    cwd = Path.cwd().resolve()
+
     output = getattr(args, "output", None)
     if output:
         try:
-            output_path = _validate_output_path(output, cwd=Path.cwd().resolve())
+            output_path = _validate_output_path(
+                output,
+                cwd=cwd,
+                argument_name="--output",
+            )
         except ValueError as exc:
             parser.exit(status=2, message=f"error: {exc}\n")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(rendered, encoding="utf-8")
+
+    excel_output = getattr(args, "excel_output", None)
+    if excel_output and args.command == "track-c-route":
+        try:
+            excel_output_path = _validate_excel_output_path(excel_output, cwd=cwd)
+            _write_track_c_route_excel(payload, excel_output_path)
+        except ValueError as exc:
+            parser.exit(status=2, message=f"error: {exc}\n")
 
     print(rendered, end="")
     return 0
